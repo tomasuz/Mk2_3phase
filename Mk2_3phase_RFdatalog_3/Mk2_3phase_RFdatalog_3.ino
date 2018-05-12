@@ -48,7 +48,9 @@
 
 //  WORKLOAD_CHECK is available for determining how much spare processing time there 
 //  is.  To activate this mode, the #define line below should be included: 
-//#define WORKLOAD_CHECK  
+#define WORKLOAD_CHECK  
+
+#define DEBUG
 
 #define CYCLES_PER_SECOND 50
 //#define JOULES_PER_WATT_HOUR 3600 // may be needed for datalogging
@@ -57,11 +59,13 @@
 #define NO_OF_PHASES 3
 #define DATALOG_PERIOD_IN_SECONDS 5
 
-const byte noOfDumploads = 3; 
+// const byte noOfDumploads = 3; 
+const byte noOfDumploads = 1; 
 
 enum polarities {NEGATIVE, POSITIVE};
 enum outputModes {ANTI_FLICKER, NORMAL};
 enum loadPriorityModes {LOAD_1_HAS_PRIORITY, LOAD_0_HAS_PRIORITY};
+// enum loadPriorityModes {LOAD_0_HAS_PRIORITY};
 
 // enum loadStates {LOAD_ON, LOAD_OFF}; // for use if loads are active low (original PCB)
 enum loadStates {LOAD_OFF, LOAD_ON}; // for use if loads are active high (Rev 2 PCB)
@@ -688,8 +692,11 @@ void processRawSamples()
             tx_data.Vrms_L3 = (int)(voltageCal[2] * sqrt(sum_Vsquared[2] / samplesDuringThisDatalogPeriod));
 #ifdef RF_PRESENT
             send_rf_data();         
-#endif            
+#endif
+
+#ifdef DEBUG
 /*     <-- Warning - Unlike its 1-phase equivalent, this 3-phase code can be affected by Serial statements!
+ */
             Serial.print(energyInBucket_main / CYCLES_PER_SECOND);   
             Serial.print(", ");
 //            
@@ -704,7 +711,7 @@ void processRawSamples()
             Serial.print(tx_data.Vrms_L2);
             Serial.print(", ");
             Serial.println(tx_data.Vrms_L3);
-*/           
+#endif
             energyStateOfPhase[0] = 0;
             energyStateOfPhase[1] = 0;
             energyStateOfPhase[2] = 0;   
@@ -714,13 +721,14 @@ void processRawSamples()
             samplesDuringThisDatalogPeriod = 0;  
 
      
-/*     <-- Warning - Unlike its 1-phase equivalent, this 3-phase code can be affected by Serial statements!
+/*     <-- Warning - Unlike its 1-phase equivalent, this 3-phase code can be affected by Serial statements! */
+#ifdef DEBUG
             for (int i = 0; i < noOfDumploads; i++)
             {            
               Serial.print(logicalLoadState[i]);
             } 
             Serial.println();
-*/            
+#endif           
           }
         }
       }
