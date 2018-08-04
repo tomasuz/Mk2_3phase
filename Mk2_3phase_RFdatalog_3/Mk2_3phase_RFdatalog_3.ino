@@ -108,7 +108,13 @@ const byte physicalLoad_2_pin = 7; // for 3-phase PCB, Load #3 (Rev 2 PCB)
 // D8 is not in use
 // D9 is not in use
 
-// analogue input pins 
+// analogue input pins
+// ADC0 (pin 23) phase 1 V
+// ADC1 (pin 24) phase 1 I
+// ADC2 (pin 25) phase 2 V
+// ADC3 (pin 26) phase 2 I
+// ADC4 (pin 27) phase 3 V
+// ADC5 (pin 28) phase 3 I
 const byte sensorV[NO_OF_PHASES] = {0,2,4}; // for 3-phase PCB
 const byte sensorI[NO_OF_PHASES] = {1,3,5}; // for 3-phase PCB 
 
@@ -153,6 +159,8 @@ float energyStateOfPhase[NO_OF_PHASES]; // only used for datalogging
 volatile boolean dataReady = false;
 volatile int sampleV[NO_OF_PHASES];
 volatile int sampleI[NO_OF_PHASES];
+volatile int samples[6];
+volatile int sensors[6];
 
 // For a mechanism to check the continuity of the sampling sequence
 #define CONTINUITY_CHECK_MAXCOUNT 250 // mains cycles
@@ -203,7 +211,8 @@ void setup()
 {  
   delay (initialDelay * 1000); // allows time to open the Serial Monitor
   
-  Serial.begin(9600);   // initialize Serial interface
+//  Serial.begin(9600);   // initialize Serial interface
+  Serial.begin(230400);   // initialize Serial interface
   Serial.println();
   Serial.println();
   Serial.println();
@@ -346,6 +355,7 @@ void setup()
 // which runs at this point therefore needs to capture the results of conversion Type N, 
 // and set up the conditions for conversion Type N+2, and so on.  
 // 
+/*
 ISR(ADC_vect)  
 {                                         
   static unsigned char sample_index = 0;
@@ -358,32 +368,44 @@ ISR(ADC_vect)
   switch(sample_index)
   {
     case 0:
-      sample_I0_raw = ADC; 
+      sample_I0_raw = ADC;
+      samples[sample_index] = sample_I0_raw;
+      sensors[sample_index] = sensorI[1];
       ADMUX = 0x40 + sensorI[1]; // set up the next-but-one conversion
       sample_index++; // advance the control flag             
       break;
     case 1:
       sample_V0_raw = ADC; 
+      samples[sample_index] = sample_V0_raw;
+      sensors[sample_index] = sensorV[1];
       ADMUX = 0x40 + sensorV[1]; // for the next-but-one conversion
       sample_index++; // advance the control flag                
       break;
     case 2:
-      sample_I1_raw = ADC; 
+      sample_I1_raw = ADC;
+      samples[sample_index] = sample_I1_raw;
+      sensors[sample_index] = sensorI[2];
       ADMUX = 0x40 + sensorI[2]; // for the next-but-one conversion
       sample_index++; // advance the control flag                
       break;
     case 3:
       sample_V1_raw = ADC; 
+      samples[sample_index] = sample_V1_raw;
+      sensors[sample_index] = sensorV[2];
       ADMUX = 0x40 + sensorV[2]; // for the next-but-one conversion
       sample_index++; // advance the control flag                 
       break;
     case 4:
       sample_I2_raw = ADC; 
+      samples[sample_index] = sample_I2_raw;
+      sensors[sample_index] = sensorI[0];
       ADMUX = 0x40 + sensorI[0]; // for the next-but-one conversion
       sample_index++; // advance the control flag                 
       break;
     case 5:
       sampleV[2] = ADC; 
+      samples[sample_index] = sampleV[2];
+      sensors[sample_index] = sensorV[0];
       ADMUX = 0x40 + sensorV[0]; // for the next-but-one conversion
       sample_index = 0; // reset the control flag                
       sampleV[0] = sample_V0_raw;
@@ -397,7 +419,71 @@ ISR(ADC_vect)
       sample_index = 0;                 // to prevent lockup (should never get here)      
   }  
 }
+*/
 
+ISR(ADC_vect)  
+{                                         
+  static unsigned char sample_index = 0;
+  static int sample_V0_raw;
+  static int sample_V1_raw;
+  static int sample_I0_raw;
+  static int sample_I1_raw;
+  static int sample_I2_raw;
+  
+  switch(sample_index)
+  {
+    case 0:
+      sample_I0_raw = ADC;
+      samples[sample_index] = sample_I0_raw;
+      sensors[sample_index] = sensorI[1];
+      ADMUX = 0x40 + sensorI[1]; // set up the next-but-one conversion
+      sample_index++; // advance the control flag             
+      break;
+    case 1:
+      sample_V0_raw = ADC; 
+      samples[sample_index] = sample_V0_raw;
+      sensors[sample_index] = sensorV[1];
+      ADMUX = 0x40 + sensorV[1]; // for the next-but-one conversion
+      sample_index++; // advance the control flag                
+      break;
+    case 2:
+      sample_I1_raw = ADC;
+      samples[sample_index] = sample_I1_raw;
+      sensors[sample_index] = sensorI[2];
+      ADMUX = 0x40 + sensorI[2]; // for the next-but-one conversion
+      sample_index++; // advance the control flag                
+      break;
+    case 3:
+      sample_V1_raw = ADC; 
+      samples[sample_index] = sample_V1_raw;
+      sensors[sample_index] = sensorV[2];
+      ADMUX = 0x40 + sensorV[2]; // for the next-but-one conversion
+      sample_index++; // advance the control flag                 
+      break;
+    case 4:
+      sample_I2_raw = ADC; 
+      samples[sample_index] = sample_I2_raw;
+      sensors[sample_index] = sensorI[0];
+      ADMUX = 0x40 + sensorI[0]; // for the next-but-one conversion
+      sample_index++; // advance the control flag                 
+      break;
+    case 5:
+      sampleV[2] = ADC; 
+      samples[sample_index] = sampleV[2];
+      sensors[sample_index] = sensorV[0];
+      ADMUX = 0x40 + sensorV[0]; // for the next-but-one conversion
+      sample_index = 0; // reset the control flag                
+      sampleV[0] = sample_V0_raw;
+      sampleV[1] = sample_V1_raw;
+      sampleI[0] = sample_I0_raw;
+      sampleI[1] = sample_I1_raw;
+      sampleI[2] = sample_I2_raw;
+      dataReady = true; 
+      break;
+    default:
+      sample_index = 0;                 // to prevent lockup (should never get here)      
+  }  
+}
 
 // The main processor waits in loop() until the DataReady flag has been set by the ADC.  
 // Once this flag has been set, the main processor clears the flag and proceeds with 
@@ -474,7 +560,8 @@ void processRawSamples()
   static enum polarities polarityOfLastSampleV[NO_OF_PHASES];  // for zero-crossing detection
   static long lastSampleV_minusDC_long[NO_OF_PHASES];     //    for the phaseCal algorithm
   static long cumVdeltasThisCycle_long[NO_OF_PHASES];    // for the LPF which determines DC offset (voltage)
-  static int samplesDuringThisMainsCycle[NO_OF_PHASES];            
+  static int samplesDuringThisMainsCycle[NO_OF_PHASES];
+  static int lastSamplesDuringThisMainsCycle[NO_OF_PHASES];           
   static long sum_Vsquared[NO_OF_PHASES];                         
   static long samplesDuringThisDatalogPeriod;
   enum polarities polarityNow;  
@@ -519,12 +606,13 @@ void processRawSamples()
             if (mainsCycles_forContinuityChecker >= CONTINUITY_CHECK_MAXCOUNT)
             {
               mainsCycles_forContinuityChecker = 0;
-              Serial.println(lowestNoOfSampleSetsPerMainsCycle);
+//              Serial.println(lowestNoOfSampleSetsPerMainsCycle);
               lowestNoOfSampleSetsPerMainsCycle = 999;
             }              
           }
          
           sumP[phase] = 0;
+          lastSamplesDuringThisMainsCycle[phase] = samplesDuringThisMainsCycle[phase];
           samplesDuringThisMainsCycle[phase] = 0;
           
         } // end of processing that is specific to the first Vsample in each +ve half cycle   
@@ -696,8 +784,10 @@ void processRawSamples()
 
 #ifdef DEBUG
 /*     <-- Warning - Unlike its 1-phase equivalent, this 3-phase code can be affected by Serial statements!
- */
-            Serial.print(energyInBucket_main / CYCLES_PER_SECOND);   
+
+            Serial.print(energyInBucket_main / CYCLES_PER_SECOND); */
+//            Serial.print(samplesDuringThisDatalogPeriod);
+            Serial.print(lastSamplesDuringThisMainsCycle[1]);   
             Serial.print(", ");
 //            
             Serial.print(tx_data.power_L1);
@@ -726,6 +816,15 @@ void processRawSamples()
             for (int i = 0; i < noOfDumploads; i++)
             {            
               Serial.print(logicalLoadState[i]);
+            } 
+            Serial.println();
+
+            for (unsigned char si = 0; si < 6; si++)
+            {            
+              Serial.print(samples[si]);
+              Serial.print(" next: ");
+              Serial.print(sensors[si]);
+              Serial.print(", ");
             } 
             Serial.println();
 #endif           
@@ -793,6 +892,7 @@ void processRawSamples()
    
     // general housekeeping
     cumVdeltasThisCycle_long[phase] += sampleV_minusDC_long; // for use with LP filter
+    lastSamplesDuringThisMainsCycle[phase] = samplesDuringThisMainsCycle[phase];
     samplesDuringThisMainsCycle[phase] ++;
     
     // store items for use during next loop
