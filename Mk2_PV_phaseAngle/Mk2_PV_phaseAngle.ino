@@ -59,12 +59,12 @@ const unsigned char loadPhases[noOfDumploads] = {0};
 
 // ----------- Pinout assignments  -----------
 
-byte outputPinForLed = 13;
-byte outputPinForTrigger = 5;
-byte outputPinForPAcontrol[noOfDumploads] = {10};
-unsigned char outputPinForPhaseRelaycontrol[NO_OF_PHASE_RELAYS] = {0, 1};
-unsigned char phaseWhichRelayControl[NO_OF_PHASE_RELAYS] = {1, 2};
-unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
+// byte outputPinForLed = 13;
+// byte outputPinForTrigger = 5;
+const byte outputPinForPAcontrol[noOfDumploads] = {5};
+const unsigned char outputPinForPhaseRelaycontrol[NO_OF_PHASE_RELAYS] = {3, 4};
+const unsigned char phaseWhichRelayControl[NO_OF_PHASE_RELAYS] = {1, 2};
+const unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
 byte ledDetectorPin = 2;  // digital
 byte ledRepeaterPin = 10;  // digital
 
@@ -81,7 +81,7 @@ const byte sensorI[3] = {B00000001, B00000011, B00000101}; // for 3-phase PCB
 // const byte sensorI[NO_OF_PHASES] = {B00000001, B00000011}; // for 3-phase PCB
 
 
-float safetyMargin_watts = 4000;  // <<<------ increase for more export
+const float safetyMargin_watts = 4000;  // <<<------ increase for more export
 long cycleCount[NO_OF_PHASES];
 long loopCount = 0;
 // long samplesindex = 0;
@@ -208,7 +208,7 @@ void setup()
 //  Serial.begin(500000);
   Serial.setTimeout(20); // for rapid input of data (default is 1000ms)
 
-  pinMode(outputPinForTrigger, OUTPUT);
+  // pinMode(outputPinForTrigger, OUTPUT);
 
   for (byte load = 0; load < noOfDumploads; load++) {
     pinMode(outputPinForPAcontrol[load], OUTPUT);
@@ -218,7 +218,7 @@ void setup()
 	  pinMode(outputPinForPhaseRelaycontrol[load], OUTPUT);
 	  stateOfRelays[load] = LOAD_OFF;
   }
-  pinMode(outputPinForLed, OUTPUT);
+  // pinMode(outputPinForLed, OUTPUT);
 
   POWERCAL = 0.042; // Units are Joules per ADC-level squared.  Used for converting the product of
   // voltage and current samples into Joules.
@@ -467,6 +467,12 @@ void loop() {
           Serial.println (realV[phase]);
           Serial.print ("realPower:\t");
           Serial.println (realPower);
+
+          for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+        	  Serial.print (stateOfRelays[relay]);
+        	  Serial.print ("\t");
+          }
+          Serial.println("");
 /*          
           for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
         	  Serial.print (sampleVminusDCs[phase][i]);
@@ -776,11 +782,14 @@ void controlPhaseSwichRellay(unsigned char phase, float realPower) {
 	}
 	for ( unsigned char load = 0; load < noOfDumploads; load++) {
 		// If phase of load is diverting (has enough power to divert) - switch relay ON to reconnect power consumers to this phase:
-	    if (loadPhases[noOfDumploads] == phase && logicalLoadState[load] == LOAD_ON) {
-	    	for ( unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
-	    		unsigned char temp = phaseWhichRelayControl[relay];
+	    // if (loadPhases[noOfDumploads] == phase && logicalLoadState[load] == LOAD_ON) {
+
+		// Second variant:
+		// If phase of load uses small amount of power from grid - switch relay ON to reconnect power consumers to this phase:
+		if (loadPhases[load] == phase && realPower < 10.0 ) {
+	    	for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
 	    		// Only switch relay if there are voltage in it and it is off:
-	    		if (phaseToWhichRelayConnect[relay] == phase && realV[temp] > 10.0 && stateOfRelays[relay] == LOAD_OFF) {
+	    		if (phaseToWhichRelayConnect[relay] == phase && realV[phaseWhichRelayControl[relay]] > 10.0 && stateOfRelays[relay] == LOAD_OFF) {
 	    			// Switch relay on to the main phase:
 	   				digitalWrite(outputPinForPhaseRelaycontrol[relay], ON);
 	   				stateOfRelays[relay] == LOAD_ON;
