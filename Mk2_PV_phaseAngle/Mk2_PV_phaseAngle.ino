@@ -82,7 +82,7 @@ const byte sensorI[3] = {B00000001, B00000011, B00000101}; // for 3-phase PCB
 float safetyMargin_watts = 0;  // <<<------ increase for more export
 long cycleCount[NO_OF_PHASES];
 long loopCount = 0;
-long samplesindex = 0;
+// long samplesindex = 0;
 
 // int samplesDuringThisMainsCycle[NO_OF_PHASES] = {0,0,0};
 // Initial values setting moved to setup().....
@@ -93,8 +93,8 @@ float cyclesPerSecond = 50; // use float to ensure accurate maths
 long noOfSamplePairs = 0;
 byte polarityNow[NO_OF_PHASES];
 
-boolean triggerNeedsToBeArmed = false;
-boolean beyondStartUpPhase = false;
+// boolean triggerNeedsToBeArmed = false;
+// boolean beyondStartUpPhase = false;
 
 float energyInBucket = 0; // mimics the operation of a meter at the grid connection point.
 //float energyInBucket_4trial = 0; // as entered by used for p-a control trials
@@ -104,8 +104,8 @@ int capacityOfEnergyBucket = 3600; // 0.001 kWh = 3600 Joules
 int lastSampleV[NO_OF_PHASES];     // stored value from the previous loop (HP filter is for voltage samples only)
 float lastFilteredV[NO_OF_PHASES], filteredV[NO_OF_PHASES]; //  voltage values after HP-filtering to remove the DC offset
 
-int lastSampleI[NO_OF_PHASES];     // stored value from the previous loop (HP filter is for voltage samples only)
-float lastFilteredI[NO_OF_PHASES], filteredI[NO_OF_PHASES]; //  voltage values after HP-filtering to remove the DC offset
+// int lastSampleI[NO_OF_PHASES];     // stored value from the previous loop (HP filter is for voltage samples only)
+// float lastFilteredI[NO_OF_PHASES], filteredI[NO_OF_PHASES]; //  voltage values after HP-filtering to remove the DC offset
 
 float prevVDCoffset[NO_OF_PHASES];          // <<--- for LPF
 float VDCoffset[NO_OF_PHASES];              // <<--- for LPF
@@ -118,7 +118,7 @@ float cumIdeltasThisCycle[NO_OF_PHASES];   // <<--- for LPF
 float sampleVminusDC[NO_OF_PHASES];         // <<--- for LPF
 float sampleIminusDC[NO_OF_PHASES];         // <<--- used with LPF
 float lastSampleVminusDC[NO_OF_PHASES];     // <<--- used with LPF
-float lastSampleIminusDC[NO_OF_PHASES];     // <<--- used with LPF
+// float lastSampleIminusDC[NO_OF_PHASES];     // <<--- used with LPF
 float sumP[NO_OF_PHASES];   //  cumulative sum of power calculations within each mains cycle
 float PHASECAL;
 float POWERCAL;  // To convert the product of raw V & I samples into Joules.
@@ -127,7 +127,7 @@ float VOLTAGECAL; // To convert raw voltage samples into volts.  Used for determ
 
 
 // for interaction between the main processor and the ISR
-volatile byte dataReady = 3; // Use byte for data ready from ADC and store phase to it. 3 - no data ready.
+volatile byte dataReadyForPhase = 3; // Use byte for data ready from ADC and store phase to it. 3 - no data ready.
 volatile int sampleV[NO_OF_PHASES];
 volatile int sampleI[NO_OF_PHASES];
 
@@ -375,7 +375,7 @@ ISR(ADC_vect) {
         ADMUX = 0x40 + sensorV[1]; // for the next-but-one conversion
         sample_index++; // advance the control flag                
       }
-      dataReady = 0;
+      dataReadyForPhase = 0;
       break;
     case 2:
       sample_I1_raw = ADC;
@@ -396,7 +396,7 @@ ISR(ADC_vect) {
         ADMUX = 0x40 + sensorV[2]; // for the next-but-one conversion
         sample_index++; // advance the control flag
       }
-      dataReady = 1;                
+      dataReadyForPhase = 1;
       break;
     case 4:
       sample_I2_raw = ADC; 
@@ -408,7 +408,7 @@ ISR(ADC_vect) {
       sampleI[2] = sample_I2_raw;
       ADMUX = 0x40 + sensorV[0]; // for the next-but-one conversion
       sample_index = 0; // reset the control flag                
-      dataReady = 2; 
+      dataReadyForPhase = 2;
       break;
     default:
       sample_index = 0;                 // to prevent lockup (should never get here)      
@@ -416,7 +416,7 @@ ISR(ADC_vect) {
 }
 
 void loop() {
-  byte phase;
+
 #ifdef WORKLOAD_CHECK
   static int del = 0; // delay, as passed to delayMicroseconds()
   static int res = 0; // result, to be displayed at the next opportunity
@@ -424,15 +424,14 @@ void loop() {
   static byte displayFlag = 0; // to determine when printing may occur
 #endif
   // each loop is for one pair of V & I measurements
-  if (dataReady < NO_OF_PHASES) {  // flag is set after every pair of ADC conversions
+  if (dataReadyForPhase < NO_OF_PHASES) {  // flag is set after every pair of ADC conversions
+	byte phase  = dataReadyForPhase;
+	dataReadyForPhase = NO_OF_PHASES; 		// clear dataready flag.
 
-    phase = dataReady;
-    dataReady = NO_OF_PHASES; 		// clear dataready flag.
-
-    samplesindex++;
-    if ( samplesindex >= 50 ) {
-      samplesindex = 0;
-    }
+//    samplesindex++;
+//    if ( samplesindex >= 50 ) {
+//      samplesindex = 0;
+//    }
     noOfSamplePairs++;              // for stats only
     samplesDuringThisMainsCycle[phase]++;  // for power calculation at the start of each mains cycle
 
@@ -440,11 +439,6 @@ void loop() {
     //    lastSampleV[phase]=sampleV[phase];            // for digital high-pass filter
     //    lastFilteredV[phase] = filteredV[phase];      // for HPF, used to identify the start of each mains cycle
     //    lastSampleVminusDC[phase] = sampleVminusDC[phase];  // for phasecal calculation
-
-    // Get the next pair of raw samples.  Because the CT generally adds more phase-advance
-    // than the voltage sensor, it makes sense to sample current before voltage
-    //  sampleI = analogRead(currentSensorPin);
-    //  sampleV = analogRead(voltageSensorPin);
 
     // remove the DC offset from these samples as determined by a low-pass filter
     sampleVminusDC[phase] = sampleV[phase] - VDCoffset[phase];
@@ -479,8 +473,8 @@ void loop() {
 
         //  Calculate the real power of all instantaneous measurements taken during the
         //  previous mains cycle, and determine the gain (or loss) in energy.
-        float realPower = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
-        float realEnergy = realPower / cyclesPerSecond;
+//        float realPower = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
+//        float realEnergy = realPower / cyclesPerSecond;
         // Debug output.
 /*        if (phase == 0 &&  (cycleCount[0] % 10) == 5) {
           Serial.print("realPower = ");
@@ -493,8 +487,8 @@ void loop() {
 
         if ((cycleCount[phase] % 1000) == 5) // display once per second
         {
-          Serial.print (samplesDuringThisMainsCycle[phase]);
-          Serial.print (" ");
+          Serial.println (samplesDuringThisMainsCycle[phase]);
+//          Serial.print (" ");
         }
 /*          Serial.println(cycleCount[phase]);
           Serial.print(" loopCount between samples = ");
@@ -531,7 +525,7 @@ void loop() {
 
         }  */
         // This is the start of a new mains cycle (just after the +ve going z-c point)
-
+/*
         if (beyondStartUpPhase == true) {
           // Providing that the DC-blocking filters have had sufficient time to settle,
           // add this power contribution to the energy bucket
@@ -556,38 +550,8 @@ void loop() {
         //      energyInBucket = energyInBucket_4trial; // over-ride the measured value
 
         triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
-
-        // ********************************************************
-        // start of section to support phase-angle control of triac
-        // determines the correct firing delay for a direct-acting trigger
-
-        // never fire if energy level is below lower threshold (zero power)
-        if (energyInBucket <= 1300) {
-          firingDelayInMicros[phase] = 99999;
-        } else {
-          // fire immediately if energy level is above upper threshold (full power)
-          if (energyInBucket >= 2300) {
-            firingDelayInMicros[phase] = 0;
-          } else {
-            // determine the appropriate firing point for the bucket's level
-            // by using either of the following algorithms
-
-        	// simple algorithm (with non-linear power response across the energy range)
-            //        firingDelayInMicros = 10 * (2300 - energyInBucket);
-
-            // complex algorithm which reflects the non-linear nature of phase-angle control.
-            firingDelayInMicros[phase] = (asin((-1 * (energyInBucket - 1800) / 500)) + (PI / 2)) * (10000 / PI);
-
-            // Suppress firing at low energy levels to avoid complications with
-            // logic near the end of each half-cycle of the mains.
-            // This cut-off affects approximately the bottom 5% of the energy range.
-            if (firingDelayInMicros[phase] > 8500) {
-              firingDelayInMicros[phase] = 99999; // never fire
-            }
-          }
-        }
-        // end of section to support phase-angle control of triac
-        //*******************************************************
+*/
+        calculateFiringDelay(phase);
 
         // clear the per-cycle accumulators for use in this new mains cycle.
         sumP[phase] = 0;
@@ -599,9 +563,8 @@ void loop() {
       // still processing POSITIVE Vsamples ...
       // this next block is for burst mode control of the triac, the output
       // pin for its trigger being on digital pin 9
-      //
-      if (triggerNeedsToBeArmed == true)
-      {
+/*
+      if (triggerNeedsToBeArmed == true) {
         // check to see whether the trigger device can now be reliably armed
         if ((sampleVminusDC[phase] * VOLTAGECAL) > 50) // 20V min for Motorola trigger
         {
@@ -627,6 +590,7 @@ void loop() {
 
         }
       }
+*/
     }  // end of processing that is specific to positive Vsamples
     else {
       if (polarityOfLastReading != NEGATIVE) {
@@ -634,25 +598,8 @@ void loop() {
       }
     } // end of processing that is specific to positive Vsamples
 
-    // Apply phase-shift to the voltage waveform to ensure that the system measures a
-    // resistive load with a power factor of unity.
-    float  phaseShiftedVminusDC = lastSampleVminusDC[phase] + PHASECAL * (sampleVminusDC[phase] - lastSampleVminusDC[phase]);
-    float instP = phaseShiftedVminusDC * sampleIminusDC[phase]; //  power contribution for this pair of V&I samples
-    sumP[phase] += instP;    // cumulative power contributions for this mains cycle
+    processSamplePair(phase);
 
-    cumVdeltasThisCycle[phase] += (sampleV[phase] - VDCoffset[phase]); // for use with LP filter
-    cumIdeltasThisCycle[phase] += (sampleI[phase] - IDCoffset[phase]); // for use with LP filter
-    
-    // store values from previous loop
-    lastSampleV[phase] = sampleV[phase];            // for digital high-pass filter
-    lastFilteredV[phase] = filteredV[phase];      // for HPF, used to identify the start of each mains cycle
-    lastSampleVminusDC[phase] = sampleVminusDC[phase];  // for phasecal calculation 
-
-    lastSampleI[phase] = sampleI[phase];            // for digital high-pass filter
-    lastFilteredI[phase] = filteredI[phase];      // for HPF, used to identify the start of each mains cycle
-    lastSampleIminusDC[phase] = sampleIminusDC[phase];  // for phasecal calculation
-
-    loopCount = 0;
 #ifdef WORKLOAD_CHECK
     delayMicroseconds(del); // <--- to assess how much spare time there is
     if (dataReady < NO_OF_PHASES) {      // if data is ready again, delay was too long
@@ -668,10 +615,11 @@ void loop() {
       }
     }
 #endif
+    loopCount = 0;
+    // End of each loop is for one pair of V & I measurements
   } else {
     loopCount++;
   }
-  // End of each loop is for one pair of V & I measurements
 
   // Executed on every loop.
   //------------------------------------------------------------
@@ -697,8 +645,41 @@ void loop() {
 } // end of loop()
 
 
-void phaseAngleTriacControl()
-{
+void calculateFiringDelay(byte phase) {
+    // ********************************************************
+     // start of section to support phase-angle control of triac
+     // determines the correct firing delay for a direct-acting trigger
+
+     // never fire if energy level is below lower threshold (zero power)
+     if (energyInBucket <= 1300) {
+       firingDelayInMicros[phase] = 99999;
+     } else {
+       // fire immediately if energy level is above upper threshold (full power)
+       if (energyInBucket >= 2300) {
+         firingDelayInMicros[phase] = 0;
+       } else {
+         // determine the appropriate firing point for the bucket's level
+         // by using either of the following algorithms
+
+     	// simple algorithm (with non-linear power response across the energy range)
+         //        firingDelayInMicros = 10 * (2300 - energyInBucket);
+
+         // complex algorithm which reflects the non-linear nature of phase-angle control.
+         firingDelayInMicros[phase] = (asin((-1 * (energyInBucket - 1800) / 500)) + (PI / 2)) * (10000 / PI);
+
+         // Suppress firing at low energy levels to avoid complications with
+         // logic near the end of each half-cycle of the mains.
+         // This cut-off affects approximately the bottom 5% of the energy range.
+         if (firingDelayInMicros[phase] > 8500) {
+           firingDelayInMicros[phase] = 99999; // never fire
+         }
+       }
+     }
+     // end of section to support phase-angle control of triac
+     //*******************************************************
+}
+
+void phaseAngleTriacControl() {
     // ********************************************************
     // start of section to support phase-angle control of triac
     // controls the signal for firing the direct-acting trigger.
@@ -734,6 +715,25 @@ void phaseAngleTriacControl()
   }
 }
 
+void processSamplePair(byte phase) {
+    // Apply phase-shift to the voltage waveform to ensure that the system measures a
+    // resistive load with a power factor of unity.
+    float phaseShiftedVminusDC = lastSampleVminusDC[phase] + PHASECAL * (sampleVminusDC[phase] - lastSampleVminusDC[phase]);
+    float instP = phaseShiftedVminusDC * sampleIminusDC[phase]; //  power contribution for this pair of V&I samples
+    sumP[phase] += instP;    // cumulative power contributions for this mains cycle
+
+    cumVdeltasThisCycle[phase] += (sampleV[phase] - VDCoffset[phase]); // for use with LP filter
+    cumIdeltasThisCycle[phase] += (sampleI[phase] - IDCoffset[phase]); // for use with LP filter
+
+    // store values from previous loop
+    lastSampleV[phase] = sampleV[phase];            // for digital high-pass filter
+    lastFilteredV[phase] = filteredV[phase];      // for HPF, used to identify the start of each mains cycle
+    lastSampleVminusDC[phase] = sampleVminusDC[phase];  // for phasecal calculation
+
+//    lastSampleI[phase] = sampleI[phase];            // for digital high-pass filter
+//    lastFilteredI[phase] = filteredI[phase];      // for HPF, used to identify the start of each mains cycle
+//    lastSampleIminusDC[phase] = sampleIminusDC[phase];  // for phasecal calculation
+}
 
 // helper function, to process LED events:
 // can be conveniently called every 20ms, at the start of each mains cycle
