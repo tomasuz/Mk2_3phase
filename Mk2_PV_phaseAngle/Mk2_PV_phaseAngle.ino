@@ -123,7 +123,7 @@ float sumP[NO_OF_PHASES];   //  cumulative sum of power calculations within each
 float sumV[NO_OF_PHASES];   //  cumulative sum of voltage calculations within each mains cycle
 float realV[NO_OF_PHASES];
 float PHASECAL;
-// float POWERCAL;  // To convert the product of raw V & I samples into Joules.
+float POWERCAL;  // To convert the product of raw V & I samples into Joules.
 // float VOLTAGECAL; // To convert raw voltage samples into volts.  Used for determining when
 // the trigger device can be safely armed
 
@@ -216,7 +216,7 @@ void setup()
     logicalLoadState[i] = LOAD_OFF;
   }
 
-//  POWERCAL = 0.042; // Units are Joules per ADC-level squared.  Used for converting the product of
+  POWERCAL = 0.042; // Units are Joules per ADC-level squared.  Used for converting the product of
   // voltage and current samples into Joules.
   //    To determine this value, note the rate that the energy bucket's
   // level increases when a known load is being measured at a convenient
@@ -259,16 +259,17 @@ void setup()
   sei();                 // Enable Global Interrupts
 
   for (byte phase = 0; phase < NO_OF_PHASES; phase++) {
-	sumP[phase] = 0.0;
-	sumV[phase] = 0.0;
-	realV[phase] = 0.0;
-	cycleCount[phase] = 0;
-    samplesDuringThisMainsCycle[phase] = 0;
-    powerCal[phase] = 0.043;
+	  firstLoopOfHalfCycle[phase] = false;
+	  sumP[phase] = 0.0;
+	  sumV[phase] = 0.0;
+	  realV[phase] = 0.0;
+	  cycleCount[phase] = 0;
+	  samplesDuringThisMainsCycle[phase] = 0;
+	  powerCal[phase] = 0.043;
 //    phaseCal[phase] = 0.5; // <- nominal values only
 //    voltageCal[phase] = 1.03;
-    Serial.print ( "powerCal for L"); Serial.print(phase + 1);
-    Serial.print (" =    "); Serial.println (powerCal[phase], 4);
+	  Serial.print ( "powerCal for L"); Serial.print(phase + 1);
+	  Serial.print (" =    "); Serial.println (powerCal[phase], 4);
 //    Serial.print ( "phaseCal for L"); Serial.print(phase + 1);
 //    Serial.print (" =     "); Serial.println (phaseCal[phase]);
 //    Serial.print ( "voltageCal for L"); Serial.print(phase + 1);
@@ -419,9 +420,9 @@ void loop() {
       polarityNow[phase] = NEGATIVE;
 
     // Block executed once then
-    if (polarityNow[phase] == POSITIVE) {
-      // Only detect the start of a new mains cycle if phase voltage is greater then some noise voltage:
-      if (polarityOfLastReading != POSITIVE && realV[phase] > 10.0) {
+    // Only detect the start of a new mains cycle if phase voltage is greater then some noise voltage:
+    if (polarityNow[phase] == POSITIVE && realV[phase] > 10.0) {
+      if (polarityOfLastReading != POSITIVE) {
 
         // This is the start of a new mains cycle (just after the +ve going z-c point)
         cycleCount[phase]++; // for stats only
@@ -439,7 +440,7 @@ void loop() {
         //  Calculate the real power of all instantaneous measurements taken during the
         //  previous mains cycle, and determine the gain (or loss) in energy.
         realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
-//        float realPower = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
+        float realPower = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
 //        float realEnergy = realPower / cyclesPerSecond;
         // Debug output.
 /*        if (phase == 0 &&  (cycleCount[0] % 10) == 5) {
@@ -451,14 +452,17 @@ void loop() {
         //           they can be really useful for calibration trials!
         // ----------------------------------------------------------------
 
-        if ((cycleCount[phase] % 1000) == 5) {// display once per second
+        if ((cycleCount[phase] % 100) == 5) {// display once per second
 
-          Serial.print ("Samples:\t");
+        	controlPhaseSwichRellay();
+          Serial.print ("Phase:\t");
+          Serial.print (phase);
+          Serial.print ("\tSamples:\t");
           Serial.println (samplesDuringThisMainsCycle[phase]);
           Serial.print ("realV:\t");
           Serial.println (realV[phase]);
-          Serial.print ("SumP:\t");
-          Serial.println (sumP[phase] / (float)samplesDuringThisMainsCycle[phase]);
+          Serial.print ("realPower:\t");
+          Serial.println (realPower);
 /*          
           for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
         	  Serial.print (sampleVminusDCs[phase][i]);
@@ -542,16 +546,7 @@ void loop() {
         samplesDuringThisMainsCycle[phase] = 0;
         cumVdeltasThisCycle[phase] = 0;
         cumIdeltasThisCycle[phase] = 0;
-      } else { // end of processing that is specific to the first +ve Vsample in each new mains cycle
-    	   // Clear summed valuaes of phase with low voltage (no connected) after 100 cycles:
-    	   if ( samplesDuringThisMainsCycle[phase] > 100 ) {
-    	   	   realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
-    		   sumP[phase] = 0;
-    		   sumV[phase] = 0;
-    		   samplesDuringThisMainsCycle[phase] = 0;
-    		   cumVdeltasThisCycle[phase] = 0;
-    		   cumIdeltasThisCycle[phase] = 0;
-    	   }
+      // end of processing that is specific to the first +ve Vsample in each new mains cycle
       }
       // still processing POSITIVE Vsamples ...
       // this next block is for burst mode control of the triac, the output
@@ -589,7 +584,7 @@ void loop() {
       if (polarityOfLastReading != NEGATIVE) {
         firstLoopOfHalfCycle[phase] = true;
       }
-    } // end of processing that is specific to positive Vsamples
+    }
 
     processSamplePair(phase);
 
@@ -709,7 +704,7 @@ void phaseAngleTriacControl() {
 }
 
 void processSamplePair(byte phase) {
-    // Apply phase-shift to the voltage waveform to ensure that the system measures a
+	// Apply phase-shift to the voltage waveform to ensure that the system measures a
     // resistive load with a power factor of unity.
 //	sampleVminusDCs[phase][samplesDuringThisMainsCycle[phase]] = sampleVminusDC[phase];
     float phaseShiftedVminusDC = lastSampleVminusDC[phase] + PHASECAL * (sampleVminusDC[phase] - lastSampleVminusDC[phase]);
@@ -729,6 +724,21 @@ void processSamplePair(byte phase) {
 //    lastSampleI[phase] = sampleI[phase];            // for digital high-pass filter
 //    lastFilteredI[phase] = filteredI[phase];      // for HPF, used to identify the start of each mains cycle
 //    lastSampleIminusDC[phase] = sampleIminusDC[phase];  // for phasecal calculation
+
+	// Clear summed values of phase with low voltage (no connected) after 100 cycles:
+    if ( samplesDuringThisMainsCycle[phase] > 100 ) {
+   	   realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
+	   sumP[phase] = 0;
+	   sumV[phase] = 0;
+	   samplesDuringThisMainsCycle[phase] = 0;
+	   cumVdeltasThisCycle[phase] = 0;
+	   cumIdeltasThisCycle[phase] = 0;
+    }
+}
+
+
+void controlPhaseSwichRellay(byte phase) {
+
 }
 
 // helper function, to process LED events:
