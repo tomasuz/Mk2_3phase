@@ -120,9 +120,11 @@ float sampleIminusDC[NO_OF_PHASES];         // <<--- used with LPF
 float lastSampleVminusDC[NO_OF_PHASES];     // <<--- used with LPF
 // float lastSampleIminusDC[NO_OF_PHASES];     // <<--- used with LPF
 float sumP[NO_OF_PHASES];   //  cumulative sum of power calculations within each mains cycle
+float sumV[NO_OF_PHASES];   //  cumulative sum of voltage calculations within each mains cycle
+float realV[NO_OF_PHASES];
 float PHASECAL;
-float POWERCAL;  // To convert the product of raw V & I samples into Joules.
-float VOLTAGECAL; // To convert raw voltage samples into volts.  Used for determining when
+// float POWERCAL;  // To convert the product of raw V & I samples into Joules.
+// float VOLTAGECAL; // To convert raw voltage samples into volts.  Used for determining when
 // the trigger device can be safely armed
 
 
@@ -164,7 +166,7 @@ float powerCal[NO_OF_PHASES];
 // scheme for taking sample values as does this sketch.
 //
 // Initial values seting moved to setup().....
-float  phaseCal[NO_OF_PHASES];
+// float  phaseCal[NO_OF_PHASES];
 // const float  phaseCal[NO_OF_PHASES] = {0.5, 0.5, 0.5}; // <- nominal values only
 int phaseCal_int[NO_OF_PHASES];           // to avoid the need for floating-point maths
 
@@ -173,7 +175,7 @@ int phaseCal_int[NO_OF_PHASES];           // to avoid the need for floating-poin
 // close to unity.
 // Initial values seting moved to setup().....
 // const float voltageCal[NO_OF_PHASES] = {1.03, 1.03, 1.03}; // compared with Fluke 77 meter
-float voltageCal[NO_OF_PHASES]; // compared with Fluke 77 meter
+// float voltageCal[NO_OF_PHASES]; // compared with Fluke 77 meter
 
 // items for LED monitoring
 byte ledState, prevLedState;
@@ -188,10 +190,12 @@ boolean phaseAngleTriggerActivated[noOfDumploads];
 unsigned long timeAtStartOfHalfCycleInMicros[NO_OF_PHASES];
 unsigned long firingDelayInMicros[NO_OF_PHASES];
 
-// byte mux[6];
+// Arrays for debugging
 // int samplesV[NO_OF_PHASES][50];
-int samplesI[NO_OF_PHASES][50];
-unsigned long firingDelaysInMicros[NO_OF_PHASES][50];
+// int samplesI[NO_OF_PHASES][50];
+// unsigned long firingDelaysInMicros[NO_OF_PHASES][50];
+float phaseShiftedVminusDCs[NO_OF_PHASES][50];
+float sampleVminusDCs[NO_OF_PHASES][50];
 
 void setup()
 {
@@ -212,7 +216,7 @@ void setup()
     logicalLoadState[i] = LOAD_OFF;
   }
 
-  POWERCAL = 0.042; // Units are Joules per ADC-level squared.  Used for converting the product of
+//  POWERCAL = 0.042; // Units are Joules per ADC-level squared.  Used for converting the product of
   // voltage and current samples into Joules.
   //    To determine this value, note the rate that the energy bucket's
   // level increases when a known load is being measured at a convenient
@@ -222,7 +226,7 @@ void setup()
   // POWERCAL is not critical as any absolute error will cancel out when
   // import and export flows are balanced.
 
-  VOLTAGECAL = (float)679 / 471; // Units are Volts per ADC-level.
+//  VOLTAGECAL = (float)679 / 471; // Units are Volts per ADC-level.
   // This value is used to determine when the voltage level is suitable for
   // arming the external trigger device.  To set this value, note the min and max
   // numbers that are seen when measuring 240Vac via the voltage sensor, which
@@ -254,19 +258,21 @@ void setup()
   ADCSRA |= (1 << ADSC); // start ADC manually first time
   sei();                 // Enable Global Interrupts
 
-  for (byte phase = 0; phase < NO_OF_PHASES; phase++)
-  {
+  for (byte phase = 0; phase < NO_OF_PHASES; phase++) {
+	sumP[phase] = 0.0;
+	sumV[phase] = 0.0;
+	realV[phase] = 0.0;
 	cycleCount[phase] = 0;
     samplesDuringThisMainsCycle[phase] = 0;
     powerCal[phase] = 0.043;
-    phaseCal[phase] = 0.5; // <- nominal values only
-    voltageCal[phase] = 1.03;
+//    phaseCal[phase] = 0.5; // <- nominal values only
+//    voltageCal[phase] = 1.03;
     Serial.print ( "powerCal for L"); Serial.print(phase + 1);
     Serial.print (" =    "); Serial.println (powerCal[phase], 4);
-    Serial.print ( "phaseCal for L"); Serial.print(phase + 1);
-    Serial.print (" =     "); Serial.println (phaseCal[phase]);
-    Serial.print ( "voltageCal for L"); Serial.print(phase + 1);
-    Serial.print (" =    "); Serial.println (voltageCal[phase], 3);
+//    Serial.print ( "phaseCal for L"); Serial.print(phase + 1);
+//    Serial.print (" =     "); Serial.println (phaseCal[phase]);
+//    Serial.print ( "voltageCal for L"); Serial.print(phase + 1);
+//    Serial.print (" =    "); Serial.println (voltageCal[phase], 3);
   }
   Serial.println ("----");
 #ifdef WORKLOAD_CHECK
@@ -307,55 +313,13 @@ void setup()
 // (so if you ever find yourself having problems with bad data you might be switching before the ADC finishes).
 
 ISR(ADC_vect) {
-  static unsigned char sample_index = 0;
-/*  
-  static int sample_I_raw;
 
-  byte tmp;            // temp register for storage of misc data
-  byte ad_mux;
-
-  ad_mux = ADMUX;      // read the value of ADMUX register. Represents conversion is running now.
-  ad_mux &= 0x0F;      // AND the first 4 bits (value of ADC pin being used)
-
+	static unsigned char sample_index = 0;
+	static int sample_I0_raw;
+	static int sample_I1_raw;
+	static int sample_I2_raw;
   
-  for ( byte iphase = 0; iphase < NO_OF_PHASES; iphase++ ) {
-    if (ad_mux == sensorI[ iphase ]) {
-      if ( iphase == 0 ) {
-        tmp = NO_OF_PHASES - 1;
-        sampleV[ tmp ] = ADC;
-        sampleI[ tmp ] = sample_I_raw;
-        dataReady = tmp;
-      } else {
-        tmp = iphase - 1;
-        sampleV[ tmp ] = ADC; // capture the results of preveous conversion. Because now converting I, results are form V of preveaus phase.
-        sampleI[ tmp ] = sample_I_raw;
-        dataReady = tmp;
-      }
-      ADMUX = 0x40 + sensorV[ iphase ]; // set up the next-but-one conversion of current phase V.
-      mux[sample_index] = ad_mux;
-      sample_index++;
-      break;
-    } else if ( ad_mux == sensorV[ iphase ] ) {
-      sample_I_raw = ADC; // capture the results of preveous conversion. Because now converting V, results are from I.
-      mux[sample_index] = ad_mux;
-      tmp = iphase + 1;
-      if ( tmp >= NO_OF_PHASES ) {
-        ADMUX = 0x40 + sensorI[ 0 ]; // Last phase, set up the next-but-one conversion of first phase I.
-        sample_index = 0;
-      } else {
-        ADMUX = 0x40 + sensorI[ tmp ];  // set up the next-but-one conversion of next phase I.
-        sample_index++;
-      }
-      break;
-    } 
-  }
-*/
-  static int sample_I0_raw;
-  static int sample_I1_raw;
-  static int sample_I2_raw;
-  
-  switch(sample_index)
-  {
+  switch(sample_index) {
     case 0:
       sample_I0_raw = ADC;
       if (NO_OF_PHASES == 1) {
@@ -456,7 +420,8 @@ void loop() {
 
     // Block executed once then
     if (polarityNow[phase] == POSITIVE) {
-      if (polarityOfLastReading != POSITIVE) {
+      // Only detect the start of a new mains cycle if phase voltage is greater then some noise voltage:
+      if (polarityOfLastReading != POSITIVE && realV[phase] > 10.0) {
 
         // This is the start of a new mains cycle (just after the +ve going z-c point)
         cycleCount[phase]++; // for stats only
@@ -473,6 +438,7 @@ void loop() {
 
         //  Calculate the real power of all instantaneous measurements taken during the
         //  previous mains cycle, and determine the gain (or loss) in energy.
+        realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
 //        float realPower = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
 //        float realEnergy = realPower / cyclesPerSecond;
         // Debug output.
@@ -485,11 +451,28 @@ void loop() {
         //           they can be really useful for calibration trials!
         // ----------------------------------------------------------------
 
-        if ((cycleCount[phase] % 1000) == 5) // display once per second
-        {
+        if ((cycleCount[phase] % 1000) == 5) {// display once per second
+
+          Serial.print ("Samples:\t");
           Serial.println (samplesDuringThisMainsCycle[phase]);
+          Serial.print ("realV:\t");
+          Serial.println (realV[phase]);
+          Serial.print ("SumP:\t");
+          Serial.println (sumP[phase] / (float)samplesDuringThisMainsCycle[phase]);
+/*          
+          for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
+        	  Serial.print (sampleVminusDCs[phase][i]);
+              Serial.print ("\t");
+          }
+          Serial.println("");
 //          Serial.print (" ");
+          for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
+        	  Serial.print (phaseShiftedVminusDCs[phase][i]);
+              Serial.print ("\t");
+          }
+          Serial.println(""); */
         }
+
 /*          Serial.println(cycleCount[phase]);
           Serial.print(" loopCount between samples = ");
           Serial.println (loopCount);
@@ -555,11 +538,21 @@ void loop() {
 
         // clear the per-cycle accumulators for use in this new mains cycle.
         sumP[phase] = 0;
+        sumV[phase] = 0;
         samplesDuringThisMainsCycle[phase] = 0;
         cumVdeltasThisCycle[phase] = 0;
         cumIdeltasThisCycle[phase] = 0;
-      } // end of processing that is specific to the first +ve Vsample in each new mains cycle
-
+      } else { // end of processing that is specific to the first +ve Vsample in each new mains cycle
+    	   // Clear summed valuaes of phase with low voltage (no connected) after 100 cycles:
+    	   if ( samplesDuringThisMainsCycle[phase] > 100 ) {
+    	   	   realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
+    		   sumP[phase] = 0;
+    		   sumV[phase] = 0;
+    		   samplesDuringThisMainsCycle[phase] = 0;
+    		   cumVdeltasThisCycle[phase] = 0;
+    		   cumIdeltasThisCycle[phase] = 0;
+    	   }
+      }
       // still processing POSITIVE Vsamples ...
       // this next block is for burst mode control of the triac, the output
       // pin for its trigger being on digital pin 9
@@ -718,8 +711,11 @@ void phaseAngleTriacControl() {
 void processSamplePair(byte phase) {
     // Apply phase-shift to the voltage waveform to ensure that the system measures a
     // resistive load with a power factor of unity.
+//	sampleVminusDCs[phase][samplesDuringThisMainsCycle[phase]] = sampleVminusDC[phase];
     float phaseShiftedVminusDC = lastSampleVminusDC[phase] + PHASECAL * (sampleVminusDC[phase] - lastSampleVminusDC[phase]);
+//    phaseShiftedVminusDCs[phase][(samplesDuringThisMainsCycle[phase])] = phaseShiftedVminusDC;
     float instP = phaseShiftedVminusDC * sampleIminusDC[phase]; //  power contribution for this pair of V&I samples
+    sumV[phase] += abs(phaseShiftedVminusDC);
     sumP[phase] += instP;    // cumulative power contributions for this mains cycle
 
     cumVdeltasThisCycle[phase] += (sampleV[phase] - VDCoffset[phase]); // for use with LP filter
