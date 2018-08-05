@@ -37,6 +37,7 @@
 
 #define REQUIRED_EXPORT_IN_WATTS 0 // when set to a negative value, this acts as a PV generator
 #define NO_OF_PHASES 3
+#define NO_OF_PHASE_RELAYS 2
 
 //  WORKLOAD_CHECK is available for determining how much spare processing time there
 //  is.  To activate this mode, the #define line below should be included:
@@ -45,24 +46,25 @@
 // const byte noOfDumploads = 3; 
 const byte noOfDumploads = 1;
 
-enum loadPriorityModes {LOAD_1_HAS_PRIORITY, LOAD_0_HAS_PRIORITY};
+// enum loadPriorityModes {LOAD_1_HAS_PRIORITY, LOAD_0_HAS_PRIORITY};
 // enum loadPriorityModes {LOAD_0_HAS_PRIORITY};
 
 // enum loadStates {LOAD_ON, LOAD_OFF}; // for use if loads are active low (original PCB)
 enum loadStates {LOAD_OFF, LOAD_ON}; // for use if loads are active high (Rev 2 PCB)
 enum loadStates logicalLoadState[noOfDumploads]; 
-enum loadStates physicalLoadState[noOfDumploads]; 
+// enum loadStates physicalLoadState[noOfDumploads];
 
 // array defining to which phase which load is connected. 
-const byte loadPhases[noOfDumploads] = {0};
+const unsigned char loadPhases[noOfDumploads] = {0};
 
 // ----------- Pinout assignments  -----------
 
 byte outputPinForLed = 13;
 byte outputPinForTrigger = 5;
 byte outputPinForPAcontrol[noOfDumploads] = {10};
-// byte voltageSensorPin = 2;
-// byte currentSensorPin = 1;
+unsigned char outputPinForPhaseRelaycontrol[NO_OF_PHASE_RELAYS] = {0, 1};
+unsigned char phaseWhichRelaycontrol[NO_OF_PHASE_RELAYS] = {1, 2};
+unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
 byte ledDetectorPin = 2;  // digital
 byte ledRepeaterPin = 10;  // digital
 
@@ -79,7 +81,7 @@ const byte sensorI[3] = {B00000001, B00000011, B00000101}; // for 3-phase PCB
 // const byte sensorI[NO_OF_PHASES] = {B00000001, B00000011}; // for 3-phase PCB
 
 
-float safetyMargin_watts = 0;  // <<<------ increase for more export
+float safetyMargin_watts = 4000;  // <<<------ increase for more export
 long cycleCount[NO_OF_PHASES];
 long loopCount = 0;
 // long samplesindex = 0;
@@ -87,14 +89,15 @@ long loopCount = 0;
 // int samplesDuringThisMainsCycle[NO_OF_PHASES] = {0,0,0};
 // Initial values setting moved to setup().....
 int samplesDuringThisMainsCycle[NO_OF_PHASES];
-byte nextStateOfTriac;
+// byte nextStateOfTriac;
+enum loadStates stateOfRelays[NO_OF_PHASE_RELAYS];
 float cyclesPerSecond = 50; // use float to ensure accurate maths
 
 long noOfSamplePairs = 0;
 byte polarityNow[NO_OF_PHASES];
 
 // boolean triggerNeedsToBeArmed = false;
-// boolean beyondStartUpPhase = false;
+boolean beyondStartUpPhase = false;
 
 float energyInBucket = 0; // mimics the operation of a meter at the grid connection point.
 //float energyInBucket_4trial = 0; // as entered by used for p-a control trials
@@ -209,12 +212,13 @@ void setup()
 
   for (byte load = 0; load < noOfDumploads; load++) {
     pinMode(outputPinForPAcontrol[load], OUTPUT);
+    logicalLoadState[load] = LOAD_OFF;
+  }
+  for (byte load = 0; load < NO_OF_PHASE_RELAYS; load++) {
+	  pinMode(outputPinForPhaseRelaycontrol[load], OUTPUT);
+	  stateOfRelays[load] = LOAD_OFF;
   }
   pinMode(outputPinForLed, OUTPUT);
-
-  for(int i = 0; i< noOfDumploads; i++) {
-    logicalLoadState[i] = LOAD_OFF;
-  }
 
   POWERCAL = 0.042; // Units are Joules per ADC-level squared.  Used for converting the product of
   // voltage and current samples into Joules.
@@ -390,7 +394,7 @@ void loop() {
 #endif
   // each loop is for one pair of V & I measurements
   if (dataReadyForPhase < NO_OF_PHASES) {  // flag is set after every pair of ADC conversions
-	byte phase  = dataReadyForPhase;
+	unsigned char phase  = dataReadyForPhase;
 	dataReadyForPhase = NO_OF_PHASES; 		// clear dataready flag.
 
 //    samplesindex++;
@@ -441,7 +445,7 @@ void loop() {
         //  previous mains cycle, and determine the gain (or loss) in energy.
         realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
         float realPower = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
-//        float realEnergy = realPower / cyclesPerSecond;
+        float realEnergy = realPower / cyclesPerSecond;
         // Debug output.
 /*        if (phase == 0 &&  (cycleCount[0] % 10) == 5) {
           Serial.print("realPower = ");
@@ -454,7 +458,7 @@ void loop() {
 
         if ((cycleCount[phase] % 100) == 5) {// display once per second
 
-        	controlPhaseSwichRellay();
+        	controlPhaseSwichRellay(phase, realPower);
           Serial.print ("Phase:\t");
           Serial.print (phase);
           Serial.print ("\tSamples:\t");
@@ -511,33 +515,12 @@ void loop() {
 
 
         }  */
-        // This is the start of a new mains cycle (just after the +ve going z-c point)
-/*
-        if (beyondStartUpPhase == true) {
-          // Providing that the DC-blocking filters have had sufficient time to settle,
-          // add this power contribution to the energy bucket
-          energyInBucket += realEnergy;
-          energyInBucket_4led += realEnergy;
-
-          // Reduce the level in the energy bucket by the specified safety margin.
-          // This allows the system to be positively biassed towards export or import
-          energyInBucket -= safetyMargin_watts / cyclesPerSecond;
-
-          // Apply max and min limits to bucket's level
-          if (energyInBucket > capacityOfEnergyBucket)
-            energyInBucket = capacityOfEnergyBucket;
-          if (energyInBucket < 0)
-            energyInBucket = 0;
-        } else {
-          // wait until the DC-blocking filters have had time to settle
-          if ( cycleCount[0] > 100) // 100 mains cycles is 2 seconds
-            beyondStartUpPhase = true;
-        }
 
         //      energyInBucket = energyInBucket_4trial; // over-ride the measured value
 
-        triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
-*/
+//        triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
+
+        calculateEnergyInBucket(phase, realEnergy);
         calculateFiringDelay(phase);
 
         // clear the per-cycle accumulators for use in this new mains cycle.
@@ -632,12 +615,36 @@ void loop() {
 #endif
 } // end of loop()
 
+void calculateEnergyInBucket(unsigned char phase, float realEnergy) {
+	// This is the start of a new mains cycle (just after the +ve going z-c point)
+	if (beyondStartUpPhase != true) {
+	  // wait until the DC-blocking filters have had time to settle
+	  if ( cycleCount[0] > 100) // 100 mains cycles is 2 seconds
+	    beyondStartUpPhase = true;
+	} else {
+
+		// Providing that the DC-blocking filters have had sufficient time to settle,
+		// add this power contribution to the energy bucket
+		energyInBucket += realEnergy;
+
+		// Reduce the level in the energy bucket by the specified safety margin.
+		// This allows the system to be positively biassed towards export or import
+		energyInBucket -= safetyMargin_watts / cyclesPerSecond;
+
+		// Apply max and min limits to bucket's level
+		if (energyInBucket > capacityOfEnergyBucket)
+			energyInBucket = capacityOfEnergyBucket;
+		if (energyInBucket < 0)
+			energyInBucket = 0;
+	}
+}
+
 
 void calculateFiringDelay(byte phase) {
     // ********************************************************
      // start of section to support phase-angle control of triac
      // determines the correct firing delay for a direct-acting trigger
-
+	 enum loadStates phaseLoadState = LOAD_OFF;
      // never fire if energy level is below lower threshold (zero power)
      if (energyInBucket <= 1300) {
        firingDelayInMicros[phase] = 99999;
@@ -645,6 +652,7 @@ void calculateFiringDelay(byte phase) {
        // fire immediately if energy level is above upper threshold (full power)
        if (energyInBucket >= 2300) {
          firingDelayInMicros[phase] = 0;
+         phaseLoadState = LOAD_ON;
        } else {
          // determine the appropriate firing point for the bucket's level
          // by using either of the following algorithms
@@ -654,14 +662,21 @@ void calculateFiringDelay(byte phase) {
 
          // complex algorithm which reflects the non-linear nature of phase-angle control.
          firingDelayInMicros[phase] = (asin((-1 * (energyInBucket - 1800) / 500)) + (PI / 2)) * (10000 / PI);
-
+         phaseLoadState = LOAD_ON;
          // Suppress firing at low energy levels to avoid complications with
          // logic near the end of each half-cycle of the mains.
          // This cut-off affects approximately the bottom 5% of the energy range.
          if (firingDelayInMicros[phase] > 8500) {
            firingDelayInMicros[phase] = 99999; // never fire
+           phaseLoadState = LOAD_OFF;
          }
        }
+     }
+     // Set logicalLoadState of load to LOAD_ON if load is diverting:
+     for (unsigned char load = 0; load < noOfDumploads; load++) {
+    	 if (loadPhases[load] == phase) {
+    		 logicalLoadState[load] = phaseLoadState;
+    	 }
      }
      // end of section to support phase-angle control of triac
      //*******************************************************
@@ -671,9 +686,9 @@ void phaseAngleTriacControl() {
     // ********************************************************
     // start of section to support phase-angle control of triac
     // controls the signal for firing the direct-acting trigger.
-  for (byte load = 0; load < noOfDumploads; load++) {
+  for (unsigned char load = 0; load < noOfDumploads; load++) {
     unsigned long timeNowInMicros = micros(); // occurs every loop, for consistent timing
-    byte loadphase = loadPhases[load];
+    unsigned char loadphase = loadPhases[load];
 
     if (firstLoopOfHalfCycle[loadphase] == true) {
       timeAtStartOfHalfCycleInMicros[loadphase] = timeNowInMicros;
@@ -689,7 +704,7 @@ void phaseAngleTriacControl() {
     if (phaseAngleTriggerActivated[load] == true) {
       // Unless dumping full power, release the trigger on all loops in this
       // half cycle after the one during which the trigger was set.
-      if (firingDelayInMicros > 100) {
+      if (firingDelayInMicros[loadphase] > 100) {
         digitalWrite(outputPinForPAcontrol[load], OFF);
       }
     } else {
@@ -737,8 +752,41 @@ void processSamplePair(byte phase) {
 }
 
 
-void controlPhaseSwichRellay(byte phase) {
+void controlPhaseSwichRellay(unsigned char phase, float realPower) {
 
+//	unsigned char outputPinForPhaseRelaycontrol[NO_OF_PHASE_RELAYS] = {0, 1};
+//	unsigned char phaseWhichRelaycontrol[NO_OF_PHASE_RELAYS] = {1, 2};
+//	unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
+//	stateOfRelays[load] = LOAD_OFF;
+//	enum loadStates logicalLoadState[noOfDumploads];
+
+	// First ensure phase used power form grid is less then safety margin:
+	if (realPower > safetyMargin_watts) {
+		for ( unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+			if (phase == phaseToWhichRelayConnect[relay]) {
+				// Switch relay off to the main phase:
+				if (loadStates[relay] == LOAD_ON) {
+					digitalWrite(outputPinForPhaseRelaycontrol[relay], OFF);
+					loadStates[relay] == LOAD_OFF;
+				}
+			}
+		}
+	}
+	for ( unsigned char load = 0; load < noOfDumploads; load++) {
+		// If phase of load is diverting (has enough power to divert) - switch relay ON to reconnect power consumers to this phase:
+	    if (loadPhases[noOfDumploads] == phase && logicalLoadState[load] == LOAD_ON) {
+	    	for ( unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+	    		// Only switch relay if there are voltage in it and it is off:
+	    		if (phaseToWhichRelayConnect[relay] == phase && realV[phaseWhichRelaycontrol[relay]] > 10.0 && loadStates[relay] == LOAD_OFF ) {
+	    			// Switch relay on to the main phase:
+	   				digitalWrite(outputPinForPhaseRelaycontrol[relay], ON);
+					loadStates[relay] == LOAD_ON;
+					// Only switch one phase per cycle:
+					break;
+	    		}
+	    	}
+	    }
+	}
 }
 
 // helper function, to process LED events:
