@@ -63,7 +63,7 @@ byte outputPinForLed = 13;
 byte outputPinForTrigger = 5;
 byte outputPinForPAcontrol[noOfDumploads] = {10};
 unsigned char outputPinForPhaseRelaycontrol[NO_OF_PHASE_RELAYS] = {0, 1};
-unsigned char phaseWhichRelaycontrol[NO_OF_PHASE_RELAYS] = {1, 2};
+unsigned char phaseWhichRelayControl[NO_OF_PHASE_RELAYS] = {1, 2};
 unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
 byte ledDetectorPin = 2;  // digital
 byte ledRepeaterPin = 10;  // digital
@@ -765,9 +765,11 @@ void controlPhaseSwichRellay(unsigned char phase, float realPower) {
 		for ( unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
 			if (phase == phaseToWhichRelayConnect[relay]) {
 				// Switch relay off to the main phase:
-				if (loadStates[relay] == LOAD_ON) {
+				if (stateOfRelays[relay] == LOAD_ON) {
 					digitalWrite(outputPinForPhaseRelaycontrol[relay], OFF);
-					loadStates[relay] == LOAD_OFF;
+					stateOfRelays[relay] == LOAD_OFF;
+					// Only switch one phase per cycle:
+					break;
 				}
 			}
 		}
@@ -776,11 +778,12 @@ void controlPhaseSwichRellay(unsigned char phase, float realPower) {
 		// If phase of load is diverting (has enough power to divert) - switch relay ON to reconnect power consumers to this phase:
 	    if (loadPhases[noOfDumploads] == phase && logicalLoadState[load] == LOAD_ON) {
 	    	for ( unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+	    		unsigned char temp = phaseWhichRelayControl[relay];
 	    		// Only switch relay if there are voltage in it and it is off:
-	    		if (phaseToWhichRelayConnect[relay] == phase && realV[phaseWhichRelaycontrol[relay]] > 10.0 && loadStates[relay] == LOAD_OFF ) {
+	    		if (phaseToWhichRelayConnect[relay] == phase && realV[temp] > 10.0 && stateOfRelays[relay] == LOAD_OFF) {
 	    			// Switch relay on to the main phase:
 	   				digitalWrite(outputPinForPhaseRelaycontrol[relay], ON);
-					loadStates[relay] == LOAD_ON;
+	   				stateOfRelays[relay] == LOAD_ON;
 					// Only switch one phase per cycle:
 					break;
 	    		}
