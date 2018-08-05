@@ -26,6 +26,7 @@
              |       |
              ----------------------> GND
 */
+#include "Arduino.h"
 
 #define POSITIVE 1
 #define NEGATIVE 0
@@ -196,7 +197,8 @@ void setup()
 {
   //  Serial.begin(9600);
   // Serial.begin(230400);
-  Serial.begin(500000);
+  Serial.begin(115200);
+//  Serial.begin(500000);
   Serial.setTimeout(20); // for rapid input of data (default is 1000ms)
 
   pinMode(outputPinForTrigger, OUTPUT);
@@ -413,8 +415,7 @@ ISR(ADC_vect) {
   }
 }
 
-void loop() // each loop is for one pair of V & I measurements
-{
+void loop() {
   byte phase;
 #ifdef WORKLOAD_CHECK
   static int del = 0; // delay, as passed to delayMicroseconds()
@@ -422,6 +423,7 @@ void loop() // each loop is for one pair of V & I measurements
   static byte count = 0; // to allow multiple runs per setting
   static byte displayFlag = 0; // to determine when printing may occur
 #endif
+  // each loop is for one pair of V & I measurements
   if (dataReady < NO_OF_PHASES) {  // flag is set after every pair of ADC conversions
 
     phase = dataReady;
@@ -458,7 +460,7 @@ void loop() // each loop is for one pair of V & I measurements
     else
       polarityNow[phase] = NEGATIVE;
 
-
+    // Block executed once then
     if (polarityNow[phase] == POSITIVE) {
       if (polarityOfLastReading != POSITIVE) {
 
@@ -489,13 +491,12 @@ void loop() // each loop is for one pair of V & I measurements
         //           they can be really useful for calibration trials!
         // ----------------------------------------------------------------
 
-/*        if ((cycleCount[phase] % 1000) == 5) // display once per second
+        if ((cycleCount[phase] % 1000) == 5) // display once per second
         {
-
-          Serial.print (noOfSamplePairs);
+          Serial.print (samplesDuringThisMainsCycle[phase]);
           Serial.print (" ");
-
-          Serial.println(cycleCount[phase]);
+        }
+/*          Serial.println(cycleCount[phase]);
           Serial.print(" loopCount between samples = ");
           Serial.println (loopCount);
           
@@ -552,7 +553,6 @@ void loop() // each loop is for one pair of V & I measurements
             beyondStartUpPhase = true;
         }
 
-        //        checkForUserInput(); // user can change the energy bucket's level
         //      energyInBucket = energyInBucket_4trial; // over-ride the measured value
 
         triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
@@ -671,44 +671,12 @@ void loop() // each loop is for one pair of V & I measurements
   } else {
     loopCount++;
   }
+  // End of each loop is for one pair of V & I measurements
 
+  // Executed on every loop.
+  //------------------------------------------------------------
+  phaseAngleTriacControl();
 
-    // Processing for ALL Vsamples, both positive and negative
-    //------------------------------------------------------------
-
-    // ********************************************************
-    // start of section to support phase-angle control of triac
-    // controls the signal for firing the direct-acting trigger.
-  for (byte load = 0; load < noOfDumploads; load++) {
-    unsigned long timeNowInMicros = micros(); // occurs every loop, for consistent timing
-    phase = loadPhases[load];
-
-    if (firstLoopOfHalfCycle[phase] == true) {
-      timeAtStartOfHalfCycleInMicros[phase] = timeNowInMicros;
-      firstLoopOfHalfCycle[phase] = false;
-      phaseAngleTriggerActivated[load] = false;
-      // Unless dumping full power, release the trigger on the first loop in each
-      // half cycle.  Ensures that trigger can't get stuck 'on'.
-      if (firingDelayInMicros[phase] > 100) {
-        digitalWrite(outputPinForPAcontrol[load], OFF);
-      }
-    }
-
-    if (phaseAngleTriggerActivated[load] == true) {
-      // Unless dumping full power, release the trigger on all loops in this
-      // half cycle after the one during which the trigger was set.
-      if (firingDelayInMicros > 100) {
-        digitalWrite(outputPinForPAcontrol[load], OFF);
-      }
-    } else {
-      if (timeNowInMicros >= (timeAtStartOfHalfCycleInMicros[phase] + firingDelayInMicros[phase])) {
-        digitalWrite(outputPinForPAcontrol[load], ON);
-        phaseAngleTriggerActivated[load] = true;
-      }
-    }
-    // end of section to support phase-angle control of triac
-    //*******************************************************
-  }
 #ifdef WORKLOAD_CHECK
   switch (displayFlag)
   {
@@ -727,6 +695,45 @@ void loop() // each loop is for one pair of V & I measurements
   }
 #endif
 } // end of loop()
+
+
+void phaseAngleTriacControl()
+{
+    // ********************************************************
+    // start of section to support phase-angle control of triac
+    // controls the signal for firing the direct-acting trigger.
+  for (byte load = 0; load < noOfDumploads; load++) {
+    unsigned long timeNowInMicros = micros(); // occurs every loop, for consistent timing
+    byte loadphase = loadPhases[load];
+
+    if (firstLoopOfHalfCycle[loadphase] == true) {
+      timeAtStartOfHalfCycleInMicros[loadphase] = timeNowInMicros;
+      firstLoopOfHalfCycle[loadphase] = false;
+      phaseAngleTriggerActivated[load] = false;
+      // Unless dumping full power, release the trigger on the first loop in each
+      // half cycle.  Ensures that trigger can't get stuck 'on'.
+      if (firingDelayInMicros[loadphase] > 100) {
+        digitalWrite(outputPinForPAcontrol[load], OFF);
+      }
+    }
+
+    if (phaseAngleTriggerActivated[load] == true) {
+      // Unless dumping full power, release the trigger on all loops in this
+      // half cycle after the one during which the trigger was set.
+      if (firingDelayInMicros > 100) {
+        digitalWrite(outputPinForPAcontrol[load], OFF);
+      }
+    } else {
+      if (timeNowInMicros >= (timeAtStartOfHalfCycleInMicros[loadphase] + firingDelayInMicros[loadphase])) {
+        digitalWrite(outputPinForPAcontrol[load], ON);
+        phaseAngleTriggerActivated[load] = true;
+      }
+    }
+    // end of section to support phase-angle control of triac
+    //*******************************************************
+  }
+}
+
 
 // helper function, to process LED events:
 // can be conveniently called every 20ms, at the start of each mains cycle
@@ -791,24 +798,3 @@ void checkLedStatus()
 
   prevLedState = ledState;
 }
-
-void checkForUserInput()
-{
-  if (Serial.available() )
-  {
-    char inbuf[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    Serial.readBytesUntil('\n', inbuf, 8);
-    float value = atof(inbuf);
-    if ((value == 0) && (inbuf[0] != '0'))
-    {
-      // invalid input
-    }
-    else
-    {
-      //      energyInBucket_4trial = value;
-      energyInBucket = value; // override the measured value
-    }
-  }
-}
-
-
