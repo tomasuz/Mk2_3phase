@@ -30,10 +30,8 @@
 
 #define POSITIVE 1
 #define NEGATIVE 0
-#define ON 0  // for use with trigger device (active low)
-#define OFF 1
-//#define ON 1  // for use with LED( active high)
-//#define OFF 0
+#define ON 1  // for use with LED( active high) or relay
+#define OFF 0
 
 #define REQUIRED_EXPORT_IN_WATTS 0 // when set to a negative value, this acts as a PV generator
 #define NO_OF_PHASES 3
@@ -49,6 +47,7 @@ const byte noOfDumploads = 1;
 // enum loadPriorityModes {LOAD_1_HAS_PRIORITY, LOAD_0_HAS_PRIORITY};
 // enum loadPriorityModes {LOAD_0_HAS_PRIORITY};
 
+// for use with trigger(load) device:
 // enum loadStates {LOAD_ON, LOAD_OFF}; // for use if loads are active low (original PCB)
 enum loadStates {LOAD_OFF, LOAD_ON}; // for use if loads are active high (Rev 2 PCB)
 enum loadStates logicalLoadState[noOfDumploads]; 
@@ -82,24 +81,23 @@ const byte sensorI[3] = {B00000001, B00000011, B00000101}; // for 3-phase PCB
 
 
 const float safetyMargin_watts = 4000;  // <<<------ increase for more export
-long cycleCount[NO_OF_PHASES];
-long loopCount = 0;
-// long samplesindex = 0;
+unsigned long cycleCount[NO_OF_PHASES];
+unsigned long loopCount = 0;
 
 // int samplesDuringThisMainsCycle[NO_OF_PHASES] = {0,0,0};
 // Initial values setting moved to setup().....
 int samplesDuringThisMainsCycle[NO_OF_PHASES];
 // byte nextStateOfTriac;
-enum loadStates stateOfRelays[NO_OF_PHASE_RELAYS];
+unsigned char stateOfRelays[NO_OF_PHASE_RELAYS];
 float cyclesPerSecond = 50; // use float to ensure accurate maths
 
 long noOfSamplePairs = 0;
-byte polarityNow[NO_OF_PHASES];
+unsigned char polarityNow[NO_OF_PHASES];
 
 // boolean triggerNeedsToBeArmed = false;
 boolean beyondStartUpPhase = false;
 
-float energyInBucket = 0; // mimics the operation of a meter at the grid connection point.
+float energyInBucket[NO_OF_PHASES]; // mimics the operation of a meter at the grid connection point.
 //float energyInBucket_4trial = 0; // as entered by used for p-a control trials
 
 int capacityOfEnergyBucket = 3600; // 0.001 kWh = 3600 Joules
@@ -125,6 +123,9 @@ float lastSampleVminusDC[NO_OF_PHASES];     // <<--- used with LPF
 float sumP[NO_OF_PHASES];   //  cumulative sum of power calculations within each mains cycle
 float sumV[NO_OF_PHASES];   //  cumulative sum of voltage calculations within each mains cycle
 float realV[NO_OF_PHASES];
+float realPower[NO_OF_PHASES];
+float realEnergy[NO_OF_PHASES];
+
 float PHASECAL;
 float POWERCAL;  // To convert the product of raw V & I samples into Joules.
 // float VOLTAGECAL; // To convert raw voltage samples into volts.  Used for determining when
@@ -196,12 +197,11 @@ unsigned long firingDelayInMicros[NO_OF_PHASES];
 // Arrays for debugging
 // int samplesV[NO_OF_PHASES][50];
 // int samplesI[NO_OF_PHASES][50];
-// unsigned long firingDelaysInMicros[NO_OF_PHASES][50];
-float phaseShiftedVminusDCs[NO_OF_PHASES][50];
-float sampleVminusDCs[NO_OF_PHASES][50];
+unsigned long loopCounts[NO_OF_PHASES][100];
+// float phaseShiftedVminusDCs[NO_OF_PHASES][50];
+// float sampleVminusDCs[NO_OF_PHASES][50];
 
-void setup()
-{
+void setup() {
   //  Serial.begin(9600);
   // Serial.begin(230400);
   Serial.begin(115200);
@@ -212,11 +212,11 @@ void setup()
 
   for (byte load = 0; load < noOfDumploads; load++) {
     pinMode(outputPinForPAcontrol[load], OUTPUT);
-    logicalLoadState[load] = LOAD_OFF;
+    logicalLoadState[load] = OFF;
   }
   for (byte load = 0; load < NO_OF_PHASE_RELAYS; load++) {
 	  pinMode(outputPinForPhaseRelaycontrol[load], OUTPUT);
-	  stateOfRelays[load] = LOAD_OFF;
+	  stateOfRelays[load] = OFF;
   }
   // pinMode(outputPinForLed, OUTPUT);
 
@@ -268,6 +268,7 @@ void setup()
 	  sumV[phase] = 0.0;
 	  realV[phase] = 0.0;
 	  cycleCount[phase] = 0;
+	  energyInBucket[phase] = 0.0;
 	  samplesDuringThisMainsCycle[phase] = 0;
 	  powerCal[phase] = 0.043;
 //    phaseCal[phase] = 0.5; // <- nominal values only
@@ -397,17 +398,8 @@ void loop() {
 	unsigned char phase  = dataReadyForPhase;
 	dataReadyForPhase = NO_OF_PHASES; 		// clear dataready flag.
 
-//    samplesindex++;
-//    if ( samplesindex >= 50 ) {
-//      samplesindex = 0;
-//    }
     noOfSamplePairs++;              // for stats only
     samplesDuringThisMainsCycle[phase]++;  // for power calculation at the start of each mains cycle
-
-    // store values from previous loop
-    //    lastSampleV[phase]=sampleV[phase];            // for digital high-pass filter
-    //    lastFilteredV[phase] = filteredV[phase];      // for HPF, used to identify the start of each mains cycle
-    //    lastSampleVminusDC[phase] = sampleVminusDC[phase];  // for phasecal calculation
 
     // remove the DC offset from these samples as determined by a low-pass filter
     sampleVminusDC[phase] = sampleV[phase] - VDCoffset[phase];
@@ -425,156 +417,95 @@ void loop() {
 
     // Block executed once then
     // Only detect the start of a new mains cycle if phase voltage is greater then some noise voltage:
-    if (polarityNow[phase] == POSITIVE && realV[phase] > 10.0) {
-      if (polarityOfLastReading != POSITIVE) {
+    if (realV[phase] > 10.0) {
+    	if (polarityNow[phase] == POSITIVE) {
+    		if (polarityOfLastReading != POSITIVE) {
 
-        // This is the start of a new mains cycle (just after the +ve going z-c point)
-        cycleCount[phase]++; // for stats only
-        firstLoopOfHalfCycle[phase] = true;
+    			// This is the start of a new mains cycle (just after the +ve going z-c point)
+    			cycleCount[phase]++; // for stats only
+    			firstLoopOfHalfCycle[phase] = true;
 
-        //      checkLedStatus(); // a really useful function, but can be commented out if not required
+// DO NOT CALCULATE ALL ON FIRST POSITIVE SAMPLE TIME !!!
 
-        // update the Low Pass Filter for DC-offset removal
-        prevVDCoffset[phase] = VDCoffset[phase];
-        VDCoffset[phase] = prevVDCoffset[phase] + (0.01 * cumVdeltasThisCycle[phase]);
+    			// checkLedStatus(); // a really useful function, but can be commented out if not required
+ //   			calculateOfsetsAndEnergy(phase);
 
-        prevIDCoffset[phase] = IDCoffset[phase];
-        IDCoffset[phase] = prevIDCoffset[phase] + (0.01 * cumIdeltasThisCycle[phase]);
+    			//      energyInBucket = energyInBucket_4trial; // over-ride the measured value
+    			//        triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
 
-        //  Calculate the real power of all instantaneous measurements taken during the
-        //  previous mains cycle, and determine the gain (or loss) in energy.
-        realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
-        float realPower = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
-        float realEnergy = realPower / cyclesPerSecond;
-        // Debug output.
-/*        if (phase == 0 &&  (cycleCount[0] % 10) == 5) {
-          Serial.print("realPower = ");
-          Serial.println(realPower);
-        } */
-        //----------------------------------------------------------------
-        // WARNING - Serial statements can interfere with time-critical code, but
-        //           they can be really useful for calibration trials!
-        // ----------------------------------------------------------------
+//    			calculateEnergyInBucket(phase);
+//    			calculateFiringDelay(phase);
 
-        if ((cycleCount[phase] % 100) == 5) {// display once per second
-
-        	controlPhaseSwichRellay(phase, realPower);
-          Serial.print ("Phase:\t");
-          Serial.print (phase);
-          Serial.print ("\tSamples:\t");
-          Serial.println (samplesDuringThisMainsCycle[phase]);
-          Serial.print ("realV:\t");
-          Serial.println (realV[phase]);
-          Serial.print ("realPower:\t");
-          Serial.println (realPower);
-
-          for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
-        	  Serial.print (stateOfRelays[relay]);
-        	  Serial.print ("\t");
-          }
-          Serial.println("");
-/*          
-          for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
-        	  Serial.print (sampleVminusDCs[phase][i]);
-              Serial.print ("\t");
-          }
-          Serial.println("");
-//          Serial.print (" ");
-          for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
-        	  Serial.print (phaseShiftedVminusDCs[phase][i]);
-              Serial.print ("\t");
-          }
-          Serial.println(""); */
-        }
-
-/*          Serial.println(cycleCount[phase]);
-          Serial.print(" loopCount between samples = ");
-          Serial.println (loopCount);
-          
-//          for (byte i_phase = 0; i_phase < NO_OF_PHASES; i_phase++) {
-            Serial.print(" phase = ");
-            Serial.println(phase); */
-/*            for (long i = 0; i < 100; i++) {
-                      Serial.print (samplesV[i_phase][i]);
-                      Serial.print (" ");
-            }
-            Serial.println ("");
-            for (long i = 0; i < 100; i++) {
-                      Serial.print (samplesI[i_phase][i]);
-                      Serial.print (" ");
-            }
-            Serial.println ("");
-          } */
-/*          Serial.print(" samplesDuringThisMainsCycle = ");
-          Serial.println(samplesDuringThisMainsCycle[phase]);
-          // Serial.print("energy in bucket = "); Serial.println(energyInBucket);
-          //        Serial.println(energyInBucket_4led); // has no upper or lower limits
-          //        energyInBucket_4led = 0; // for calibration purposes only
-
-          Serial.print("realEnergy = ");
-          Serial.print(realEnergy);
-          Serial.print(", energyInBucket = ");
-          Serial.print(energyInBucket);
-          Serial.print(", firingDelay = ");
-          Serial.println(firingDelayInMicros[phase]);
-          //        Serial.print(", samples = ");
-
-
-        }  */
-
-        //      energyInBucket = energyInBucket_4trial; // over-ride the measured value
-
-//        triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
-
-        calculateEnergyInBucket(phase, realEnergy);
-        calculateFiringDelay(phase);
-
-        // clear the per-cycle accumulators for use in this new mains cycle.
-        sumP[phase] = 0;
-        sumV[phase] = 0;
-        samplesDuringThisMainsCycle[phase] = 0;
-        cumVdeltasThisCycle[phase] = 0;
-        cumIdeltasThisCycle[phase] = 0;
-      // end of processing that is specific to the first +ve Vsample in each new mains cycle
-      }
-      // still processing POSITIVE Vsamples ...
-      // this next block is for burst mode control of the triac, the output
-      // pin for its trigger being on digital pin 9
+    			// clear the per-cycle accumulators for use in this new mains cycle.
+    			sumP[phase] = 0;
+    			sumV[phase] = 0;
+    			samplesDuringThisMainsCycle[phase] = 0;
+    			cumVdeltasThisCycle[phase] = 0;
+    			cumIdeltasThisCycle[phase] = 0;
+    			// end of processing that is specific to the first +ve Vsample in each new mains cycle
+    		}
+    	// still processing POSITIVE Vsamples ...
+    	// this next block is for burst mode control of the triac, the output
+    	// pin for its trigger being on digital pin 9
 /*
       if (triggerNeedsToBeArmed == true) {
-        // check to see whether the trigger device can now be reliably armed
-        if ((sampleVminusDC[phase] * VOLTAGECAL) > 50) // 20V min for Motorola trigger
-        {
-          // It's now safe to arm the trigger.  So ...
+        	// check to see whether the trigger device can now be reliably armed
+        	if ((sampleVminusDC[phase] * VOLTAGECAL) > 50) // 20V min for Motorola trigger
+        	{
+          	  // It's now safe to arm the trigger.  So ...
 
-          // first check the level in the energy bucket to determine whether the
-          // triac should be fired or not at the next opportunity
-          //
-          if (energyInBucket > (capacityOfEnergyBucket / 2))
-          {
-            nextStateOfTriac = ON;  // the external trigger device is active low
-            digitalWrite(outputPinForLed, 1);  // active high
-          } else {
-            nextStateOfTriac = OFF;
-            digitalWrite(outputPinForLed, 0);
-          }
+          	  // first check the level in the energy bucket to determine whether the
+          	  // triac should be fired or not at the next opportunity
+          	  //
+          	  if (energyInBucket > (capacityOfEnergyBucket / 2))
+          	  {
+            		nextStateOfTriac = ON;  // the external trigger device is active low
+            		digitalWrite(outputPinForLed, 1);  // active high
+          	  } else {
+            		nextStateOfTriac = OFF;
+            		digitalWrite(outputPinForLed, 0);
+          	  }
 
-          // then set the Arduino's output pin accordingly,
-          digitalWrite(outputPinForTrigger, nextStateOfTriac);
+          	  // then set the Arduino's output pin accordingly,
+          	  digitalWrite(outputPinForTrigger, nextStateOfTriac);
 
-          // and clear the flag.
-          triggerNeedsToBeArmed = false;
-
-        }
+          	  // and clear the flag.
+          	  triggerNeedsToBeArmed = false;
+        	}
       }
 */
-    }  // end of processing that is specific to positive Vsamples
-    else {
-      if (polarityOfLastReading != NEGATIVE) {
-        firstLoopOfHalfCycle[phase] = true;
-      }
-    }
+    	// end of processing that is specific to positive Vsamples
+    	} else {
+    		if (polarityOfLastReading != NEGATIVE) {
+    			firstLoopOfHalfCycle[phase] = true;
+    		}
+    	} // end of processing ve going z-c point
 
+    	// This switch distributes calculations between samples not to do all calculations in between time of first sample:
+    	switch(samplesDuringThisMainsCycle[phase]) {
+    	    case 0:
+    	    	// there are already enough calculations in between 0 sample time.
+    	    	break;
+    	    case 1:
+    	    	calculateOfsetsAndEnergy(phase);
+    	    	break;
+    	    case 2:
+    	    	calculateEnergyInBucket(phase);
+    	    	break;
+    	    case 3:
+    	    	calculateFiringDelay(phase);
+    	    	break;
+    	    case 4:
+    	    	controlPhaseSwichRellay(phase);
+    	    	break;
+    	    case 5:
+    	    	printDebug(phase);
+    	    	break;
+    	    default:
+    	    	printDebug(phase);
+    	} // end of case
+
+    } // end of realV[phase] > 10.0
     processSamplePair(phase);
 
 #ifdef WORKLOAD_CHECK
@@ -592,6 +523,7 @@ void loop() {
       }
     }
 #endif
+    loopCounts[phase][samplesDuringThisMainsCycle[phase]] = loopCount;
     loopCount = 0;
     // End of each loop is for one pair of V & I measurements
   } else {
@@ -621,7 +553,100 @@ void loop() {
 #endif
 } // end of loop()
 
-void calculateEnergyInBucket(unsigned char phase, float realEnergy) {
+
+void calculateOfsetsAndEnergy(unsigned char phase) {
+    // update the Low Pass Filter for DC-offset removal
+     prevVDCoffset[phase] = VDCoffset[phase];
+     VDCoffset[phase] = prevVDCoffset[phase] + (0.01 * cumVdeltasThisCycle[phase]);
+
+     prevIDCoffset[phase] = IDCoffset[phase];
+     IDCoffset[phase] = prevIDCoffset[phase] + (0.01 * cumIdeltasThisCycle[phase]);
+
+     //  Calculate the real power of all instantaneous measurements taken during the
+     //  previous mains cycle, and determine the gain (or loss) in energy.
+     realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
+     realPower[phase] = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
+     realEnergy[phase] = realPower[phase] / cyclesPerSecond;
+}
+
+void printDebug(unsigned char phase) {
+    // Debug output.
+/*        if (phase == 0 &&  (cycleCount[0] % 10) == 5) {
+      Serial.print("realPower = ");
+      Serial.println(realPower);
+    } */
+    //----------------------------------------------------------------
+    // WARNING - Serial statements can interfere with time-critical code, but
+    //           they can be really useful for calibration trials!
+    // ----------------------------------------------------------------
+
+    if ((cycleCount[phase] % 100) == 5) {// display once per second
+
+      Serial.print ("Phase:\t");
+      Serial.print (phase);
+      Serial.print ("\tSamples:\t");
+      Serial.println (samplesDuringThisMainsCycle[phase]);
+      Serial.print ("realV:\t");
+      Serial.println (realV[phase]);
+      Serial.print ("realPower:\t");
+      Serial.println (realPower[phase]);
+
+      for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+    	  Serial.print (stateOfRelays[relay]);
+    	  Serial.print ("\t");
+      }
+      Serial.println("");
+/*
+      for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
+    	  Serial.print (sampleVminusDCs[phase][i]);
+          Serial.print ("\t");
+      }
+      Serial.println("");
+//          Serial.print (" ");
+      for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
+    	  Serial.print (phaseShiftedVminusDCs[phase][i]);
+          Serial.print ("\t");
+      }
+      Serial.println(""); */
+    }
+
+/*          Serial.println(cycleCount[phase]);
+      Serial.print(" loopCount between samples = ");
+      Serial.println (loopCount);
+
+//          for (byte i_phase = 0; i_phase < NO_OF_PHASES; i_phase++) {
+        Serial.print(" phase = ");
+        Serial.println(phase); */
+/*            for (long i = 0; i < 100; i++) {
+                  Serial.print (samplesV[i_phase][i]);
+                  Serial.print (" ");
+        }
+        Serial.println ("");
+        for (long i = 0; i < 100; i++) {
+                  Serial.print (samplesI[i_phase][i]);
+                  Serial.print (" ");
+        }
+        Serial.println ("");
+      } */
+/*          Serial.print(" samplesDuringThisMainsCycle = ");
+      Serial.println(samplesDuringThisMainsCycle[phase]);
+      // Serial.print("energy in bucket = "); Serial.println(energyInBucket);
+      //        Serial.println(energyInBucket_4led); // has no upper or lower limits
+      //        energyInBucket_4led = 0; // for calibration purposes only
+
+      Serial.print("realEnergy = ");
+      Serial.print(realEnergy);
+      Serial.print(", energyInBucket = ");
+      Serial.print(energyInBucket);
+      Serial.print(", firingDelay = ");
+      Serial.println(firingDelayInMicros[phase]);
+      //        Serial.print(", samples = ");
+
+
+    }  */
+}
+
+void calculateEnergyInBucket(unsigned char phase) {
 	// This is the start of a new mains cycle (just after the +ve going z-c point)
 	if (beyondStartUpPhase != true) {
 	  // wait until the DC-blocking filters have had time to settle
@@ -631,17 +656,17 @@ void calculateEnergyInBucket(unsigned char phase, float realEnergy) {
 
 		// Providing that the DC-blocking filters have had sufficient time to settle,
 		// add this power contribution to the energy bucket
-		energyInBucket += realEnergy;
+		energyInBucket[phase] += realEnergy[phase];
 
 		// Reduce the level in the energy bucket by the specified safety margin.
 		// This allows the system to be positively biassed towards export or import
-		energyInBucket -= safetyMargin_watts / cyclesPerSecond;
+		energyInBucket[phase] -= safetyMargin_watts / cyclesPerSecond;
 
 		// Apply max and min limits to bucket's level
-		if (energyInBucket > capacityOfEnergyBucket)
-			energyInBucket = capacityOfEnergyBucket;
-		if (energyInBucket < 0)
-			energyInBucket = 0;
+		if (energyInBucket[phase] > capacityOfEnergyBucket)
+			energyInBucket[phase] = capacityOfEnergyBucket;
+		if (energyInBucket[phase] < 0)
+			energyInBucket[phase] = 0;
 	}
 }
 
@@ -650,15 +675,15 @@ void calculateFiringDelay(byte phase) {
     // ********************************************************
      // start of section to support phase-angle control of triac
      // determines the correct firing delay for a direct-acting trigger
-	 enum loadStates phaseLoadState = LOAD_OFF;
+	 enum loadStates phaseLoadState = OFF;
      // never fire if energy level is below lower threshold (zero power)
-     if (energyInBucket <= 1300) {
+     if (energyInBucket[phase] <= 1300) {
        firingDelayInMicros[phase] = 99999;
      } else {
        // fire immediately if energy level is above upper threshold (full power)
-       if (energyInBucket >= 2300) {
+       if (energyInBucket[phase] >= 2300) {
          firingDelayInMicros[phase] = 0;
-         phaseLoadState = LOAD_ON;
+         phaseLoadState = ON;
        } else {
          // determine the appropriate firing point for the bucket's level
          // by using either of the following algorithms
@@ -667,18 +692,18 @@ void calculateFiringDelay(byte phase) {
          //        firingDelayInMicros = 10 * (2300 - energyInBucket);
 
          // complex algorithm which reflects the non-linear nature of phase-angle control.
-         firingDelayInMicros[phase] = (asin((-1 * (energyInBucket - 1800) / 500)) + (PI / 2)) * (10000 / PI);
-         phaseLoadState = LOAD_ON;
+         firingDelayInMicros[phase] = (asin((-1 * (energyInBucket[phase] - 1800) / 500)) + (PI / 2)) * (10000 / PI);
+         phaseLoadState = ON;
          // Suppress firing at low energy levels to avoid complications with
          // logic near the end of each half-cycle of the mains.
          // This cut-off affects approximately the bottom 5% of the energy range.
          if (firingDelayInMicros[phase] > 8500) {
            firingDelayInMicros[phase] = 99999; // never fire
-           phaseLoadState = LOAD_OFF;
+           phaseLoadState = OFF;
          }
        }
      }
-     // Set logicalLoadState of load to LOAD_ON if load is diverting:
+     // Set logicalLoadState of load to ON if load is diverting:
      for (unsigned char load = 0; load < noOfDumploads; load++) {
     	 if (loadPhases[load] == phase) {
     		 logicalLoadState[load] = phaseLoadState;
@@ -703,7 +728,7 @@ void phaseAngleTriacControl() {
       // Unless dumping full power, release the trigger on the first loop in each
       // half cycle.  Ensures that trigger can't get stuck 'on'.
       if (firingDelayInMicros[loadphase] > 100) {
-        digitalWrite(outputPinForPAcontrol[load], OFF);
+        digitalWrite(outputPinForPAcontrol[load], LOAD_OFF);
       }
     }
 
@@ -711,11 +736,11 @@ void phaseAngleTriacControl() {
       // Unless dumping full power, release the trigger on all loops in this
       // half cycle after the one during which the trigger was set.
       if (firingDelayInMicros[loadphase] > 100) {
-        digitalWrite(outputPinForPAcontrol[load], OFF);
+        digitalWrite(outputPinForPAcontrol[load], LOAD_OFF);
       }
     } else {
       if (timeNowInMicros >= (timeAtStartOfHalfCycleInMicros[loadphase] + firingDelayInMicros[loadphase])) {
-        digitalWrite(outputPinForPAcontrol[load], ON);
+        digitalWrite(outputPinForPAcontrol[load], LOAD_ON);
         phaseAngleTriggerActivated[load] = true;
       }
     }
@@ -747,7 +772,7 @@ void processSamplePair(byte phase) {
 //    lastSampleIminusDC[phase] = sampleIminusDC[phase];  // for phasecal calculation
 
 	// Clear summed values of phase with low voltage (no connected) after 100 cycles:
-    if ( samplesDuringThisMainsCycle[phase] > 100 ) {
+    if ( samplesDuringThisMainsCycle[phase] >= 100 ) {
    	   realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
 	   sumP[phase] = 0;
 	   sumV[phase] = 0;
@@ -758,53 +783,53 @@ void processSamplePair(byte phase) {
 }
 
 
-void controlPhaseSwichRellay(unsigned char phase, float realPower) {
+void controlPhaseSwichRellay(unsigned char phase) {
 
 //	unsigned char outputPinForPhaseRelaycontrol[NO_OF_PHASE_RELAYS] = {0, 1};
 //	unsigned char phaseWhichRelaycontrol[NO_OF_PHASE_RELAYS] = {1, 2};
 //	unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
 //	stateOfRelays[load] = LOAD_OFF;
 //	enum loadStates logicalLoadState[noOfDumploads];
-
+  if ((cycleCount[phase] % 100) == 5) {// display once per second
 	// First ensure phase used power form grid is less then safety margin:
-	if (realPower > safetyMargin_watts) {
-		for ( unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+	if (realPower[phase] > safetyMargin_watts) {
+		for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
 			if (phase == phaseToWhichRelayConnect[relay]) {
 				// Switch relay off to the main phase:
-				if (stateOfRelays[relay] == LOAD_ON) {
+				if (stateOfRelays[relay] == ON) {
 					digitalWrite(outputPinForPhaseRelaycontrol[relay], OFF);
-					stateOfRelays[relay] == LOAD_OFF;
+					stateOfRelays[relay] = OFF;
 					// Only switch one phase per cycle:
 					break;
 				}
 			}
 		}
 	}
-	for ( unsigned char load = 0; load < noOfDumploads; load++) {
+	for (unsigned char load = 0; load < noOfDumploads; load++) {
 		// If phase of load is diverting (has enough power to divert) - switch relay ON to reconnect power consumers to this phase:
-	    // if (loadPhases[noOfDumploads] == phase && logicalLoadState[load] == LOAD_ON) {
+	    // if (loadPhases[noOfDumploads] == phase && logicalLoadState[load] == ON) {
 
 		// Second variant:
 		// If phase of load uses small amount of power from grid - switch relay ON to reconnect power consumers to this phase:
-		if (loadPhases[load] == phase && realPower < 10.0 ) {
+		if (loadPhases[load] == phase && realPower[phase] < 10.0 ) {
 	    	for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
 	    		// Only switch relay if there are voltage in it and it is off:
-	    		if (phaseToWhichRelayConnect[relay] == phase && realV[phaseWhichRelayControl[relay]] > 10.0 && stateOfRelays[relay] == LOAD_OFF) {
+	    		if (phaseToWhichRelayConnect[relay] == phase && realV[phaseWhichRelayControl[relay]] > 10.0 && stateOfRelays[relay] == OFF) {
 	    			// Switch relay on to the main phase:
 	   				digitalWrite(outputPinForPhaseRelaycontrol[relay], ON);
-	   				stateOfRelays[relay] == LOAD_ON;
+	   				stateOfRelays[relay] = ON;
 					// Only switch one phase per cycle:
 					break;
 	    		}
 	    	}
 	    }
 	}
+  }
 }
 
 // helper function, to process LED events:
 // can be conveniently called every 20ms, at the start of each mains cycle
-void checkLedStatus()
-{
+void checkLedStatus() {
 #ifdef DEBUG
   ledState = OFF;
 #else
@@ -814,14 +839,11 @@ void checkLedStatus()
   if (ledState != prevLedState)
   {
     // led has changed state
-    if (ledState == ON)
-    {
+    if (ledState == ON) {
       // led has just gone on
       ledOnAt = millis();
       ledRecentlyOnFlag = true;
-    }
-    else
-    {
+    } else {
       // led has just gone off
       if (ledRecentlyOnFlag == true)
       {
