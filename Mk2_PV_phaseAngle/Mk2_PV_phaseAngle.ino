@@ -51,7 +51,7 @@ const byte noOfDumploads = 1;
 // enum loadStates {LOAD_ON, LOAD_OFF}; // for use if loads are active low (original PCB)
 enum loadStates {LOAD_OFF, LOAD_ON}; // for use if loads are active high (Rev 2 PCB)
 enum loadStates logicalLoadState[noOfDumploads]; 
-// enum loadStates physicalLoadState[noOfDumploads];
+
 
 // array defining to which phase which load is connected. 
 const unsigned char loadPhases[noOfDumploads] = {0};
@@ -64,8 +64,8 @@ const byte outputPinForPAcontrol[noOfDumploads] = {5};
 const unsigned char outputPinForPhaseRelaycontrol[NO_OF_PHASE_RELAYS] = {3, 4};
 const unsigned char phaseWhichRelayControl[NO_OF_PHASE_RELAYS] = {1, 2};
 const unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
-byte ledDetectorPin = 2;  // digital
-byte ledRepeaterPin = 10;  // digital
+// byte ledDetectorPin = 2;  // digital
+// byte ledRepeaterPin = 10;  // digital
 
 // analogue input pins
 // const byte sensorV[NO_OF_PHASES] = {B00000000, B00000010, B00000100}; // for 3-phase PCB
@@ -84,9 +84,9 @@ const float safetyMargin_watts = 4000;  // <<<------ increase for more export
 unsigned long cycleCount[NO_OF_PHASES];
 unsigned long loopCount = 0;
 
-// int samplesDuringThisMainsCycle[NO_OF_PHASES] = {0,0,0};
 // Initial values setting moved to setup().....
 int samplesDuringThisMainsCycle[NO_OF_PHASES];
+int samplesDuringLastMainsCycle[NO_OF_PHASES];
 // byte nextStateOfTriac;
 unsigned char stateOfRelays[NO_OF_PHASE_RELAYS];
 float cyclesPerSecond = 50; // use float to ensure accurate maths
@@ -122,6 +122,7 @@ float lastSampleVminusDC[NO_OF_PHASES];     // <<--- used with LPF
 // float lastSampleIminusDC[NO_OF_PHASES];     // <<--- used with LPF
 float sumP[NO_OF_PHASES];   //  cumulative sum of power calculations within each mains cycle
 float sumV[NO_OF_PHASES];   //  cumulative sum of voltage calculations within each mains cycle
+float sumVOfLastMainsCycle[NO_OF_PHASES];
 float realV[NO_OF_PHASES];
 float realPower[NO_OF_PHASES];
 float realEnergy[NO_OF_PHASES];
@@ -266,10 +267,12 @@ void setup() {
 	  firstLoopOfHalfCycle[phase] = false;
 	  sumP[phase] = 0.0;
 	  sumV[phase] = 0.0;
+	  sumVOfLastMainsCycle[phase] = 0.0;
 	  realV[phase] = 0.0;
 	  cycleCount[phase] = 0;
 	  energyInBucket[phase] = 0.0;
 	  samplesDuringThisMainsCycle[phase] = 0;
+	  samplesDuringLastMainsCycle[phase] = 32;
 	  powerCal[phase] = 0.043;
 //    phaseCal[phase] = 0.5; // <- nominal values only
 //    voltageCal[phase] = 1.03;
@@ -333,7 +336,7 @@ ISR(ADC_vect) {
       } else {
         ADMUX = 0x40 + sensorI[1]; // set up the next-but-one conversion
       }
-      sample_index++; // advance the control flag             
+      sample_index++; 		// advance the control flag
       break;
     case 1:
       sampleV[0] = ADC;
@@ -343,7 +346,7 @@ ISR(ADC_vect) {
         sample_index = 0;
       } else {
         ADMUX = 0x40 + sensorV[1]; // for the next-but-one conversion
-        sample_index++; // advance the control flag                
+        sample_index++; 	// advance the control flag
       }
       dataReadyForPhase = 0;
       break;
@@ -354,7 +357,7 @@ ISR(ADC_vect) {
       } else {
         ADMUX = 0x40 + sensorI[2]; // for the next-but-one conversion
       }
-      sample_index++; // advance the control flag                
+      sample_index++; 		// advance the control flag
       break;
     case 3:
       sampleV[1] = ADC;
@@ -364,24 +367,24 @@ ISR(ADC_vect) {
         sample_index = 0;
       } else {
         ADMUX = 0x40 + sensorV[2]; // for the next-but-one conversion
-        sample_index++; // advance the control flag
+        sample_index++; 	// advance the control flag
       }
       dataReadyForPhase = 1;
       break;
     case 4:
       sample_I2_raw = ADC; 
       ADMUX = 0x40 + sensorI[0]; // for the next-but-one conversion
-      sample_index++; // advance the control flag                 
+      sample_index++; 		// advance the control flag
       break;
     case 5:
       sampleV[2] = ADC;
       sampleI[2] = sample_I2_raw;
       ADMUX = 0x40 + sensorV[0]; // for the next-but-one conversion
-      sample_index = 0; // reset the control flag                
+      sample_index = 0; 	// reset the control flag
       dataReadyForPhase = 2;
       break;
     default:
-      sample_index = 0;                 // to prevent lockup (should never get here)      
+      sample_index = 0;		// to prevent lockup (should never get here)
   }
 }
 
@@ -415,9 +418,9 @@ void loop() {
     else
       polarityNow[phase] = NEGATIVE;
 
-    // Block executed once then
     // Only detect the start of a new mains cycle if phase voltage is greater then some noise voltage:
     if (realV[phase] > 10.0) {
+        // Block executed once then
     	if (polarityNow[phase] == POSITIVE) {
     		if (polarityOfLastReading != POSITIVE) {
 
@@ -437,8 +440,10 @@ void loop() {
 //    			calculateFiringDelay(phase);
 
     			// clear the per-cycle accumulators for use in this new mains cycle.
+    			sumVOfLastMainsCycle[phase] = sumV[phase];
     			sumP[phase] = 0;
     			sumV[phase] = 0;
+    			samplesDuringLastMainsCycle[phase] = samplesDuringThisMainsCycle[phase];
     			samplesDuringThisMainsCycle[phase] = 0;
     			cumVdeltasThisCycle[phase] = 0;
     			cumIdeltasThisCycle[phase] = 0;
@@ -501,8 +506,8 @@ void loop() {
     	    case 5:
     	    	printDebug(phase);
     	    	break;
-    	    default:
-    	    	printDebug(phase);
+//    	    default:
+//    	    	printDebug(phase);
     	} // end of case
 
     } // end of realV[phase] > 10.0
@@ -564,8 +569,8 @@ void calculateOfsetsAndEnergy(unsigned char phase) {
 
      //  Calculate the real power of all instantaneous measurements taken during the
      //  previous mains cycle, and determine the gain (or loss) in energy.
-     realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
-     realPower[phase] = POWERCAL * sumP[phase] / (float)samplesDuringThisMainsCycle[phase];
+     realV[phase] = sumVOfLastMainsCycle[phase] / (float)samplesDuringLastMainsCycle[phase];
+     realPower[phase] = POWERCAL * sumP[phase] / (float)samplesDuringLastMainsCycle[phase];
      realEnergy[phase] = realPower[phase] / cyclesPerSecond;
 }
 
@@ -579,23 +584,57 @@ void printDebug(unsigned char phase) {
     // WARNING - Serial statements can interfere with time-critical code, but
     //           they can be really useful for calibration trials!
     // ----------------------------------------------------------------
+//   	switch(samplesDuringThisMainsCycle[phase]) {
+   	switch((cycleCount[phase] % 100)) {
+    	    case 0:
+     	    	break;
+    	    case 1:
+    	    	Serial.print ("Phase:\t");
+    	    	Serial.print (phase);
+    	    	break;
+    	    case 2:
+    	        Serial.print ("\tSamples:\t");
+    	        Serial.println (samplesDuringLastMainsCycle[phase]);
+    	        break;
+    	    case 3:
+    	        Serial.print ("realV:\t");
+    	        Serial.println (realV[phase]);
+    	        break;
+    	    case 4:
+    	        Serial.print ("realPower:\t");
+    	        Serial.println (realPower[phase]);
+    	    	break;
+    	    case 5:
+    	        for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+    	      	  Serial.print (stateOfRelays[relay]);
+    	      	  Serial.print ("\t");
+    	        }
+    	        Serial.println("");
+    	    	break;
+    	    case 6:
+       	        for (unsigned char i = 0; i < samplesDuringLastMainsCycle[phase]; i++) {
+        	      	  Serial.print (loopCounts[phase][i]);
+        	      	  Serial.print ("\t");
+        	    }
+        	    Serial.println("");
+        	    break;
+    	    case 7:
+        	    break;
+    	    case 8:
+        	    break;
+    	    case 9:
+        	    break;
+    	    case 10:
+        	    break;
+    	    case 11:
+        	    break;
+//   	    default:
 
-    if ((cycleCount[phase] % 100) == 5) {// display once per second
+    	} // end of case
 
-      Serial.print ("Phase:\t");
-      Serial.print (phase);
-      Serial.print ("\tSamples:\t");
-      Serial.println (samplesDuringThisMainsCycle[phase]);
-      Serial.print ("realV:\t");
-      Serial.println (realV[phase]);
-      Serial.print ("realPower:\t");
-      Serial.println (realPower[phase]);
+//    if ((cycleCount[phase] % 100) == 5) {// display once per second
 
-      for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
-    	  Serial.print (stateOfRelays[relay]);
-    	  Serial.print ("\t");
-      }
-      Serial.println("");
+
 /*
       for (int i = 0; i < samplesDuringThisMainsCycle[phase]; i++) {
     	  Serial.print (sampleVminusDCs[phase][i]);
@@ -608,7 +647,6 @@ void printDebug(unsigned char phase) {
           Serial.print ("\t");
       }
       Serial.println(""); */
-    }
 
 /*          Serial.println(cycleCount[phase]);
       Serial.print(" loopCount between samples = ");
@@ -752,9 +790,8 @@ void phaseAngleTriacControl() {
 void processSamplePair(byte phase) {
 	// Apply phase-shift to the voltage waveform to ensure that the system measures a
     // resistive load with a power factor of unity.
-//	sampleVminusDCs[phase][samplesDuringThisMainsCycle[phase]] = sampleVminusDC[phase];
     float phaseShiftedVminusDC = lastSampleVminusDC[phase] + PHASECAL * (sampleVminusDC[phase] - lastSampleVminusDC[phase]);
-//    phaseShiftedVminusDCs[phase][(samplesDuringThisMainsCycle[phase])] = phaseShiftedVminusDC;
+
     float instP = phaseShiftedVminusDC * sampleIminusDC[phase]; //  power contribution for this pair of V&I samples
     sumV[phase] += abs(phaseShiftedVminusDC);
     sumP[phase] += instP;    // cumulative power contributions for this mains cycle
@@ -774,8 +811,10 @@ void processSamplePair(byte phase) {
 	// Clear summed values of phase with low voltage (no connected) after 100 cycles:
     if ( samplesDuringThisMainsCycle[phase] >= 100 ) {
    	   realV[phase] = sumV[phase] / (float)samplesDuringThisMainsCycle[phase];
+   	   sumVOfLastMainsCycle[phase] = sumV[phase];
 	   sumP[phase] = 0;
 	   sumV[phase] = 0;
+	   samplesDuringLastMainsCycle[phase] = samplesDuringThisMainsCycle[phase];
 	   samplesDuringThisMainsCycle[phase] = 0;
 	   cumVdeltasThisCycle[phase] = 0;
 	   cumIdeltasThisCycle[phase] = 0;
@@ -790,7 +829,7 @@ void controlPhaseSwichRellay(unsigned char phase) {
 //	unsigned char phaseToWhichRelayConnect[NO_OF_PHASE_RELAYS] = {0, 0};
 //	stateOfRelays[load] = LOAD_OFF;
 //	enum loadStates logicalLoadState[noOfDumploads];
-  if ((cycleCount[phase] % 100) == 5) {// display once per second
+  if ((cycleCount[phase] % 100) == 0) {// display once per second
 	// First ensure phase used power form grid is less then safety margin:
 	if (realPower[phase] > safetyMargin_watts) {
 		for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
@@ -829,6 +868,7 @@ void controlPhaseSwichRellay(unsigned char phase) {
 
 // helper function, to process LED events:
 // can be conveniently called every 20ms, at the start of each mains cycle
+/*
 void checkLedStatus() {
 #ifdef DEBUG
   ledState = OFF;
@@ -886,3 +926,4 @@ void checkLedStatus() {
 
   prevLedState = ledState;
 }
+*/
