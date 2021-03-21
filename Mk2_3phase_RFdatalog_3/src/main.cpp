@@ -196,14 +196,76 @@ int phaseCal_int[NO_OF_PHASES];           // to avoid the need for floating-poin
 // close to unity. 
 const float voltageCal[NO_OF_PHASES] = {1.03, 1.03, 1.03}; // compared with Fluke 77 meter
 
+int freeRam () {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
+}
 
+void updatePhysicalLoadStates()
+/*
+ * This function provides the link between the logical and physical loads.  The
+ * array, logicalLoadState[], contains the on/off state of all logical loads, with
+ * element 0 being for the one with the highest priority.  The array,
+ * physicalLoadState[], contains the on/off state of all physical loads.
+ *
+ * The association between the physical and logical loads is 1:1.  By default, numerical
+ * equivalence is maintained, so logical(N) maps to physical(N).  If physical load 1 is set
+ * to have priority, rather than physical load 0, the logical-to-physical association for
+ * loads 0 and 1 are swapped.
+ *
+ * Any other mapping relaionships could be configured here.
+ */
+{
+  for (int i = 0; i < noOfDumploads; i++)
+  {
+    physicalLoadState[i] = logicalLoadState[i];
+  }
 
+  if (loadPriorityMode == LOAD_1_HAS_PRIORITY)
+  {
+    // swap physical loads 0 & 1 if remote load has priority
+    physicalLoadState[0] = logicalLoadState[1];
+    physicalLoadState[1] = logicalLoadState[0];
+  }
+}
 
-void setup()
-{  
+// Although this sketch always operates in ANTI_FLICKER mode, it was convenient
+// to leave this mechanism in place.
+//
+void configureParamsForSelectedOutputMode()
+{
+  if (outputMode == ANTI_FLICKER)
+  {
+    // settings for anti-flicker mode
+    lowerThreshold_default =
+       capacityOfEnergyBucket_main * (0.5 - offsetOfEnergyThresholdsInAFmode);
+    upperThreshold_default =
+       capacityOfEnergyBucket_main * (0.5 + offsetOfEnergyThresholdsInAFmode);
+  }
+  else
+  {
+    // settings for normal mode
+    lowerThreshold_default = capacityOfEnergyBucket_main * 0.5;
+    upperThreshold_default = capacityOfEnergyBucket_main * 0.5;
+  }
+
+  // display relevant settings for selected output mode
+  Serial.print("  capacityOfEnergyBucket_main = ");
+  Serial.println(capacityOfEnergyBucket_main);
+  Serial.print("  lowerEnergyThreshold   = ");
+  Serial.println(lowerThreshold_default);
+  Serial.print("  upperEnergyThreshold   = ");
+  Serial.println(upperThreshold_default);
+
+  Serial.print(">>free RAM = ");
+  Serial.println(freeRam());  // a useful value to keep an eye on
+}
+
+void setup() {
   delay (initialDelay * 1000); // allows time to open the Serial Monitor
   
-  Serial.begin(9600);   // initialize Serial interface
+  Serial.begin(230400);   // initialize Serial interface
   Serial.println();
   Serial.println();
   Serial.println();
@@ -398,72 +460,82 @@ ISR(ADC_vect)
   }  
 }
 
+void processLatestContribution(byte phase, float power)
+{
+  float latestEnergyContribution = power; // for efficiency, the energy scale is Joules * CYCLES_PER_SECOND
 
-// The main processor waits in loop() until the DataReady flag has been set by the ADC.  
-// Once this flag has been set, the main processor clears the flag and proceeds with 
-// the processing for a complete set of 3 pairs of V & I samples.  It then returns to 
-// loop() to wait for the next set to become available.
-//   If the next set of samples become available before the processing of the previous set 
-// has been completed, data could be lost.  This situation can be avoided by prior use of 
-// the WORKLOAD_CHECK mode.  Using this facility, the amount of spare processing capacity 
-// per 6-sample set can be determined.  
-//
-void loop()             
-{ 
-#ifdef WORKLOAD_CHECK
-  static int del = 0; // delay, as passed to delayMicroseconds()
-  static int res = 0; // result, to be displayed at the next opportunity
-  static byte count = 0; // to allow multiple runs per setting
-  static byte displayFlag = 0; // to determine when printing may occur
-#endif
-  
-  if (dataReady)   // flag is set after every pair of ADC conversions
-  {
-    dataReady = false; // reset the flag
-    processRawSamples(); // executed once for each pair of V&I samples
-    
-#ifdef WORKLOAD_CHECK 
-    delayMicroseconds(del); // <--- to assess how much spare time there is
-    if (dataReady)       // if data is ready again, delay was too long
-    { 
-      res = del;             // note the exact value
-      del = 1;               // and start again with 1us delay   
-      count = 0;
-      displayFlag = 0;   
-    }
-    else
-    {
-      count++;          // to give several runs with the same value
-      if (count > 50)
-      {
-        count = 0;
-        del++;          //  increase delay by 1uS
-      } 
-    }
-#endif  
+  // add the latest energy contribution to the relevant per-phase accumulator
+  // (only used for datalogging of power)
+  energyStateOfPhase[phase] += latestEnergyContribution;
 
-  }  // <-- this closing brace needs to be outside the WORKLOAD_CHECK blocks! 
-  
-#ifdef WORKLOAD_CHECK 
-  switch (displayFlag) 
+  // add the latest energy contribution to the main energy accumulator
+  energyInBucket_main += latestEnergyContribution;
+
+  // apply any adjustment that is required.
+  if (phase == 0)
   {
-    case 0: // the result is available now, but don't display until the next loop
-      displayFlag++;
-      break;
-    case 1: // with minimum delay, it's OK to print now
-      Serial.print(res);
-      displayFlag++;
-      break;
-    case 2: // with minimum delay, it's OK to print now
-      Serial.println("uS");
-      displayFlag++;
-      break;
-    default:; // for most of the time, displayFlag is 3           
+    energyInBucket_main -= REQUIRED_EXPORT_IN_WATTS; // energy scale is Joules x 50
   }
-#endif
-  
-} // end of loop()
 
+  // Applying max and min limits to the main accumulator's level
+  // is deferred until after the energy related decisions have been taken
+  //
+}
+
+// this function changes the value of the load priorities if the state of the external switch is altered
+void checkLoadPrioritySelection()
+{
+  static byte loadPrioritySwitchCcount = 0;
+  int pinState = digitalRead(loadPrioritySelectorPin);
+  if (pinState != loadPriorityMode)
+  {
+    loadPrioritySwitchCcount++;
+  }
+  if (loadPrioritySwitchCcount >= 20)
+  {
+    loadPrioritySwitchCcount = 0;
+    loadPriorityMode = (enum loadPriorityModes)pinState;  // change the global variable
+    Serial.print ("loadPriority selection changed to ");
+    if (loadPriorityMode == LOAD_0_HAS_PRIORITY) {
+      Serial.println ( "load 0"); }
+    else {
+      Serial.println ( "load 1"); }
+  }
+}
+
+byte nextLogicalLoadToBeAdded()
+{
+  byte retVal = noOfDumploads;
+  boolean success = false;
+
+  for (byte index = 0; index < noOfDumploads && !success; index++)
+  {
+    if (logicalLoadState[index] == LOAD_OFF)
+    {
+      success = true;
+      retVal = index;
+    }
+  }
+  return(retVal);
+}
+
+
+byte nextLogicalLoadToBeRemoved()
+{
+  byte retVal = noOfDumploads;
+  boolean success = false;
+
+  // NB. the index cannot be a 'byte' because the loop would not terminate correctly!
+  for (char index = (noOfDumploads -1); index >= 0 && !success; index--)
+  {
+    if (logicalLoadState[index] == LOAD_ON)
+    {
+      success = true;
+      retVal = index;
+    }
+  }
+  return(retVal);
+}
 
 // This routine is called to process each set of V & I samples (3 pairs).  The main processor and 
 // the ADC work autonomously, their operation being synchnonised only via the dataReady flag.  
@@ -802,147 +874,70 @@ void processRawSamples()
 }
 // end of processRawSamples()
 
-
-void processLatestContribution(byte phase, float power)
-{
-  float latestEnergyContribution = power; // for efficiency, the energy scale is Joules * CYCLES_PER_SECOND
-
-  // add the latest energy contribution to the relevant per-phase accumulator
-  // (only used for datalogging of power)
-  energyStateOfPhase[phase] += latestEnergyContribution;  
-  
-  // add the latest energy contribution to the main energy accumulator
-  energyInBucket_main += latestEnergyContribution;
-  
-  // apply any adjustment that is required. 
-  if (phase == 0)
-  {
-    energyInBucket_main -= REQUIRED_EXPORT_IN_WATTS; // energy scale is Joules x 50
-  }
-  
-  // Applying max and min limits to the main accumulator's level
-  // is deferred until after the energy related decisions have been taken
-  //  
-}
-
-byte nextLogicalLoadToBeAdded()
-{ 
-  byte retVal = noOfDumploads; 
-  boolean success = false;
-  
-  for (byte index = 0; index < noOfDumploads && !success; index++)
-  {
-    if (logicalLoadState[index] == LOAD_OFF) 
-    {
-      success = true; 
-      retVal = index;
-    }
-  }
-  return(retVal);
-}
-
-
-byte nextLogicalLoadToBeRemoved()
-{
-  byte retVal = noOfDumploads; 
-  boolean success = false;
-  
-  // NB. the index cannot be a 'byte' because the loop would not terminate correctly!
-  for (char index = (noOfDumploads -1); index >= 0 && !success; index--)
-  {
-    if (logicalLoadState[index] == LOAD_ON)
-    {
-      success = true; 
-      retVal = index;
-    }
-  }
-  return(retVal);
-}
-
-
-void updatePhysicalLoadStates()
-/*
- * This function provides the link between the logical and physical loads.  The 
- * array, logicalLoadState[], contains the on/off state of all logical loads, with 
- * element 0 being for the one with the highest priority.  The array, 
- * physicalLoadState[], contains the on/off state of all physical loads. 
- * 
- * The association between the physical and logical loads is 1:1.  By default, numerical
- * equivalence is maintained, so logical(N) maps to physical(N).  If physical load 1 is set 
- * to have priority, rather than physical load 0, the logical-to-physical association for 
- * loads 0 and 1 are swapped.
- *
- * Any other mapping relaionships could be configured here.
- */
-{
-  for (int i = 0; i < noOfDumploads; i++)
-  {
-    physicalLoadState[i] = logicalLoadState[i]; 
-  }
-   
-  if (loadPriorityMode == LOAD_1_HAS_PRIORITY)
-  {
-    // swap physical loads 0 & 1 if remote load has priority 
-    physicalLoadState[0] = logicalLoadState[1];
-    physicalLoadState[1] = logicalLoadState[0];
-  } 
-}
-
-
-// this function changes the value of the load priorities if the state of the external switch is altered 
-void checkLoadPrioritySelection()  
-{
-  static byte loadPrioritySwitchCcount = 0;
-  int pinState = digitalRead(loadPrioritySelectorPin);
-  if (pinState != loadPriorityMode)
-  {
-    loadPrioritySwitchCcount++;
-  }  
-  if (loadPrioritySwitchCcount >= 20)
-  {
-    loadPrioritySwitchCcount = 0;
-    loadPriorityMode = (enum loadPriorityModes)pinState;  // change the global variable
-    Serial.print ("loadPriority selection changed to ");
-    if (loadPriorityMode == LOAD_0_HAS_PRIORITY) {
-      Serial.println ( "load 0"); }
-    else {  
-      Serial.println ( "load 1"); }
-  }
-}
-
-
-// Although this sketch always operates in ANTI_FLICKER mode, it was convenient
-// to leave this mechanism in place.
+// The main processor waits in loop() until the DataReady flag has been set by the ADC.
+// Once this flag has been set, the main processor clears the flag and proceeds with
+// the processing for a complete set of 3 pairs of V & I samples.  It then returns to
+// loop() to wait for the next set to become available.
+//   If the next set of samples become available before the processing of the previous set
+// has been completed, data could be lost.  This situation can be avoided by prior use of
+// the WORKLOAD_CHECK mode.  Using this facility, the amount of spare processing capacity
+// per 6-sample set can be determined.
 //
-void configureParamsForSelectedOutputMode()
-{  
-  if (outputMode == ANTI_FLICKER)
+void loop()
+{
+#ifdef WORKLOAD_CHECK
+  static int del = 0; // delay, as passed to delayMicroseconds()
+  static int res = 0; // result, to be displayed at the next opportunity
+  static byte count = 0; // to allow multiple runs per setting
+  static byte displayFlag = 0; // to determine when printing may occur
+#endif
+
+  if (dataReady)   // flag is set after every pair of ADC conversions
   {
-    // settings for anti-flicker mode
-    lowerThreshold_default = 
-       capacityOfEnergyBucket_main * (0.5 - offsetOfEnergyThresholdsInAFmode); 
-    upperThreshold_default = 
-       capacityOfEnergyBucket_main * (0.5 + offsetOfEnergyThresholdsInAFmode);   
+    dataReady = false; // reset the flag
+    processRawSamples(); // executed once for each pair of V&I samples
+
+#ifdef WORKLOAD_CHECK
+    delayMicroseconds(del); // <--- to assess how much spare time there is
+    if (dataReady)       // if data is ready again, delay was too long
+    {
+      res = del;             // note the exact value
+      del = 1;               // and start again with 1us delay
+      count = 0;
+      displayFlag = 0;
+    }
+    else
+    {
+      count++;          // to give several runs with the same value
+      if (count > 50)
+      {
+        count = 0;
+        del++;          //  increase delay by 1uS
+      }
+    }
+#endif
+
+  }  // <-- this closing brace needs to be outside the WORKLOAD_CHECK blocks!
+
+#ifdef WORKLOAD_CHECK
+  switch (displayFlag)
+  {
+    case 0: // the result is available now, but don't display until the next loop
+      displayFlag++;
+      break;
+    case 1: // with minimum delay, it's OK to print now
+      Serial.print(res);
+      displayFlag++;
+      break;
+    case 2: // with minimum delay, it's OK to print now
+      Serial.println("uS");
+      displayFlag++;
+      break;
+    default:; // for most of the time, displayFlag is 3
   }
-  else
-  { 
-    // settings for normal mode
-    lowerThreshold_default = capacityOfEnergyBucket_main * 0.5; 
-    upperThreshold_default = capacityOfEnergyBucket_main * 0.5;   
-  }
-  
-  // display relevant settings for selected output mode
-  Serial.print("  capacityOfEnergyBucket_main = ");
-  Serial.println(capacityOfEnergyBucket_main);
-  Serial.print("  lowerEnergyThreshold   = ");
-  Serial.println(lowerThreshold_default);
-  Serial.print("  upperEnergyThreshold   = ");
-  Serial.println(upperThreshold_default);
-  
-  Serial.print(">>free RAM = ");
-  Serial.println(freeRam());  // a useful value to keep an eye on
-}
- 
+#endif
+
+} // end of loop()
  
 #ifdef RF_PRESENT
 void send_rf_data()
@@ -956,19 +951,3 @@ void send_rf_data()
   rf12_sendStart(0, &tx_data, sizeof tx_data);
 }
 #endif
-
-
-int freeRam () {
-  extern int __heap_start, *__brkval; 
-  int v; 
-  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
-}
-
-
-
-
-
-
-
-
-
