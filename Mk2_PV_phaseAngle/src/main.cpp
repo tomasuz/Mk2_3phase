@@ -27,6 +27,8 @@ Circuit for monitoring pulses from a supply meter using checkLedStatus():
              ----------------------> GND
 */ 
 
+#include "Arduino.h"
+
 #define POSITIVE 1
 #define NEGATIVE 0
 #define ON 0  // for use with trigger device (active low)
@@ -90,7 +92,7 @@ unsigned long firingDelayInMicros;
 
 void setup()
 {
-  Serial.begin(115200);
+  Serial.begin(230400);
   Serial.setTimeout(20); // for rapid input of data (default is 1000ms)
 
   pinMode(outputPinForTrigger, OUTPUT); 
