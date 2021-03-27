@@ -203,9 +203,9 @@ unsigned long loopCounts[NO_OF_PHASES][100];
 
 void setup() {
   //  Serial.begin(9600);
-  // Serial.begin(230400);
-  Serial.begin(115200);
-//  Serial.begin(500000);
+  // Serial.begin(115200);
+  Serial.begin(230400);
+  // Serial.begin(500000);
   Serial.setTimeout(20); // for rapid input of data (default is 1000ms)
 
   // pinMode(outputPinForTrigger, OUTPUT);
@@ -388,12 +388,6 @@ ISR(ADC_vect) {
 
 void loop() {
 
-#ifdef WORKLOAD_CHECK
-  static int del = 0; // delay, as passed to delayMicroseconds()
-  static int res = 0; // result, to be displayed at the next opportunity
-  static byte count = 0; // to allow multiple runs per setting
-  static byte displayFlag = 0; // to determine when printing may occur
-#endif
   // each loop is for one pair of V & I measurements
   if (dataReadyForPhase < NO_OF_PHASES) {  // flag is set after every pair of ADC conversions
 	unsigned char phase  = dataReadyForPhase;
@@ -489,22 +483,22 @@ void loop() {
     	    	// there are already enough calculations in between 0 sample time.
     	    	break;
     	    case 1:
-    	    	calculateOfsetsAndEnergy(phase);
+//    	    	calculateOfsetsAndEnergy(phase);
     	    	break;
     	    case 2:
-    	    	calculateEnergyInBucket(phase);
+//    	    	calculateEnergyInBucket(phase);
     	    	break;
     	    case 3:
-    	    	calculateFiringDelay(phase);
+//    	    	calculateFiringDelay(phase);
     	    	break;
     	    case 4:
-    	    	controlPhaseSwichRellay(phase);
+//   	    	controlPhaseSwichRellay(phase);
     	    	break;
     	    case 5:
     	    	printDebug(phase);
     	    	break;
-    	    default:
-    	    	printDebug(phase);
+//    	    default:
+//    	    	printDebug(phase);
     	} // end of case
 
     } // end of realV[phase] > 10.0
@@ -536,23 +530,6 @@ void loop() {
   //------------------------------------------------------------
   phaseAngleTriacControl();
 
-#ifdef WORKLOAD_CHECK
-  switch (displayFlag)
-  {
-    case 0: // the result is available now, but don't display until the next loop
-      displayFlag++;
-      break;
-    case 1: // with minimum delay, it's OK to print now
-      Serial.print(res);
-      displayFlag++;
-      break;
-    case 2: // with minimum delay, it's OK to print now
-      Serial.println("uS");
-      displayFlag++;
-      break;
-    default:; // for most of the time, displayFlag is 3
-  }
-#endif
 } // end of loop()
 
 
@@ -582,38 +559,52 @@ void printDebug(unsigned char phase) {
     //           they can be really useful for calibration trials!
     // ----------------------------------------------------------------
 //   	switch(samplesDuringThisMainsCycle[phase]) {
-   	switch(cycleCount[phase] % 100) {
+		Serial.print ("Phase:\t");
+		Serial.println (phase);
+		Serial.print ("cycleCount:\t");
+		Serial.println (cycleCount[phase]);
+    	switch(cycleCount[phase] % 100) {
     	    case 0:
+    			Serial.println ("case 0:\t");
     	    	break;
     	    case 1:
-    	    	Serial.print ("Phase:\t");
-    	    	Serial.print (phase);
+    	    	Serial.println ("case 1:\t");
     	    	break;
     	    case 2:
-    	        Serial.print ("\tSamples:\t");
-    	        Serial.println (samplesDuringLastMainsCycle[phase]);
+    	    	Serial.println ("case 3:\t");
     	        break;
     	    case 3:
-    	        Serial.print ("realV:\t");
-    	        Serial.println (realV[phase]);
+    	    	Serial.println ("case 3:\t");
     	        break;
     	    case 4:
-    	        Serial.print ("realPower:\t");
-    	        Serial.println (realPower[phase]);
+    	    	Serial.println ("case 4:\t");
     	    	break;
     	    case 5:
-    	        for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
-    	      	  Serial.print (stateOfRelays[relay]);
-    	      	  Serial.print ("\t");
-    	        }
-    	        Serial.println("");
+    	    	Serial.println ("case 5:\t");
     	    	break;
     	    case 6:
-       	        for (unsigned char i = 0; i < samplesDuringLastMainsCycle[phase]; i++) {
-        	      	  Serial.print (loopCounts[phase][i]);
-        	      	  Serial.print ("\t");
-        	    }
-        	    Serial.println("");
+    	    	Serial.println ("case 6:\t");
+        	    break;
+    	    case 7:
+    	    	Serial.println ("case 7:\t");
+        	    break;
+    	    case 8:
+    	    	Serial.println ("case 8:\t");
+        	    break;
+    	    case 9:
+    	    	Serial.println ("case 9:\t");
+        	    break;
+    	    case 10:
+    	    	Serial.println ("case 10:\t");
+        	    break;
+    	    case 11:
+    	    	Serial.println ("case 11:\t");
+        	    break;
+    	    case 12:
+    	    	Serial.println ("case 12:\t");
+        	    break;
+    	    case 13:
+    	    	Serial.println ("case 13:\t");
         	    break;
 //   	    default:
 
