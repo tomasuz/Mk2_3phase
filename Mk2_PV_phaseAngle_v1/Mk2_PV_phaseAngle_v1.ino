@@ -33,7 +33,7 @@
 #define ON 1  // for use with LED( active high) or relay
 #define OFF 0
 
-#define NO_OF_PHASES 3
+#define NO_OF_PHASES 1
 #define NO_OF_PHASE_RELAYS 2
 
 // const byte noOfDumploads = 3; 
@@ -77,7 +77,7 @@ const byte sensorI[3] = {B00000001, B00000011, B00000101}; // for 3-phase PCB
 
 const float safetyMargin_watts = 4000;  // <<<------ increase for more export
 unsigned long cycleCount[NO_OF_PHASES];
-unsigned long loopCount = 0;
+unsigned long loopCount[NO_OF_PHASES];
 
 // Initial values setting moved to setup().....
 int samplesDuringThisMainsCycle[NO_OF_PHASES];
@@ -165,7 +165,8 @@ float powerCal[NO_OF_PHASES];
 //
 // Initial values seting moved to setup().....
 // float  phaseCal[NO_OF_PHASES];
-const float phaseCal[NO_OF_PHASES] = {0.5, 0.5, 0.5}; // <- nominal values only
+// const float phaseCal[NO_OF_PHASES] = {0.17, 0.17, 0.17}; // <- nominal values only
+const float phaseCal[NO_OF_PHASES] = {0.17};
 // int phaseCal_int[NO_OF_PHASES];           // to avoid the need for floating-point maths
 
 // For datalogging purposes, voltageCal has been added too.  Because the range of ADC values is
@@ -256,6 +257,8 @@ void setup() {
 	  sumP[phase] = 0.0;
 	  sumV[phase] = 0.0;
 	  sumVOfLastMainsCycle[phase] = 0.0;
+    VDCoffset[phase] = 512.0;
+    IDCoffset[phase] = 512.0;
 	  realV[phase] = 0.0;
     realPower[phase] = 0.0;
     realLastPower[phase] = 0.0;
@@ -263,6 +266,7 @@ void setup() {
 	  energyInBucket[phase] = 0.0;
 	  samplesDuringThisMainsCycle[phase] = 0;
 	  samplesDuringLastMainsCycle[phase] = 32;
+    loopCount[phase] = 0;
 	  powerCal[phase] = POWERCAL;
 //    voltageCal[phase] = 1.03;
 	  Serial.print ( "powerCal for L"); Serial.print(phase + 1);
@@ -397,13 +401,13 @@ void loop() {
 
     			// checkLedStatus(); // a really useful function, but can be commented out if not required
     			calculateOfsetsAndEnergy(phase);
-      if (beyondStartUpPhase != true) {
-        // wait until the DC-blocking filters have had time to settle
-        if ( cycleCount[0] > 100) // 100 mains cycles is 2 seconds
-          beyondStartUpPhase = true;
-      } else {
-        calculateFiringDelay(phase);
-      }
+          if (beyondStartUpPhase != true) {
+            // wait until the DC-blocking filters have had time to settle
+            if ( cycleCount[0] > 100) // 100 mains cycles is 2 seconds
+              beyondStartUpPhase = true;
+          } else {
+            calculateFiringDelay(phase);
+          }
 
     			//      energyInBucket = energyInBucket_4trial; // over-ride the measured value
     			//        triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
@@ -451,47 +455,50 @@ void loop() {
     	} else { //polarityNow[phase] == NEGATIVE)
     		if (polarityOfLastReading != NEGATIVE) {
     			firstLoopOfHalfCycle[phase] = true;
+          loopCount[phase] = 0;
     		}
     	} // end of processing ve going z-c point
     } else {
 
     } // end of realV[phase] > 10.0
 
-	// This switch distributes calculations between samples not to do all calculations in between time of first sample:
-if (phase == 0) {
-	switch(samplesDuringThisMainsCycle[phase]) {
-		case 0:
-			// there are already enough calculations in between 0 sample time.
-		  break;
-		case 1:
-	      break;
-		case 2:
-		  printInfo(phase);
-		  break;
-		case 3:
-//    	    	calculateFiringDelay(phase);
-			break;
-		case 4:
-			controlPhaseSwichRellay(phase);
-			break;
-		case 5:
-			printDebug(phase);
-			break;
-//    	    default:
-//    	    	printDebug(phase);
-	} // end of case
-}
     processSamplePair(phase);
-    loopCount = 0;
     // End of each loop is for one pair of V & I measurements
   } else {
-    loopCount++;
   }
 
   // Executed on every loop.
   //------------------------------------------------------------
   phaseAngleTriacControl();
-
+  // This switch distributes calculations between samples not to do all calculations in between time of first sample:
+  for (byte phase = 0; phase < NO_OF_PHASES; phase++) {
+    if ((cycleCount[phase] % 100) == 5 && realV[phase] > 10.0) {
+      switch(loopCount[phase]) {
+        case 0:
+          // there are already enough calculations in between 0 sample time.
+          break;
+        case 1:
+          Serial.println((String) "VDCoffset:\t" + VDCoffset[phase]);
+          break;
+        case 2:
+          Serial.println((String) "firingDelayInMicros:\t" + firingDelayInMicros[phase]);
+//          Serial.println((String) "IDCoffset:\t" + IDCoffset[phase]);
+          break;
+        case 3:
+//            calculateFiringDelay(phase);
+          break;
+        case 4:
+          controlPhaseSwichRellay(phase);
+          break;
+        case 5:
+//        printDebug(phase);
+          break;
+//          default:
+//            printDebug(phase);
+      } // end of switch/case
+    }
+    loopCount[phase]++;
+  }
 } // end of loop()
 
 
@@ -509,28 +516,6 @@ void calculateOfsetsAndEnergy(unsigned char phase) {
      realLastPower[phase] = realPower[phase];
      realPower[phase] = powerCal[phase] * sumP[phase] / (float)samplesDuringLastMainsCycle[phase];
      realEnergy[phase] = realPower[phase] / cyclesPerSecond;
-}
-
-void printInfo(unsigned char phase) {
-    switch((cycleCount[phase] % 100)) {
-          case 0:
-            break;
-          case 1:
-//            Serial.println((String) "VDCoffset:\t" + VDCoffset[phase]);
-            break;
-          case 2:
-//            Serial.println((String) "IDCoffset:\t" + IDCoffset[phase]);
-            break;
-          case 3:
-//            Serial.println((String) "Real Energy:\t" + realEnergy[phase]);
-            break;
-            ;
-          case 4:
-            Serial.println((String) "firingDelayInMicros:\t" + firingDelayInMicros[phase]);
-            break;
-            ;
-    } // end of case
-
 }
 
 void printDebug(unsigned char phase) {
@@ -692,7 +677,7 @@ void calculateFiringDelay(byte phase) {
 	 if (firingDelayInMicros[phase] < 0) {
 		 firingDelayInMicros[phase] = 0;
 	 }
-	 if (firingDelayInMicros[phase] > 8500) {
+	 if (firingDelayInMicros[phase] > 9999) {
 		 firingDelayInMicros[phase] = 9999;
 	 }
 
