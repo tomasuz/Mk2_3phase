@@ -92,7 +92,8 @@ unsigned long firingDelayInMicros;
 
 void setup()
 {
-  Serial.begin(230400);
+  // Serial.begin(230400);
+  Serial.begin(500000);
   Serial.setTimeout(20); // for rapid input of data (default is 1000ms)
 
   pinMode(outputPinForTrigger, OUTPUT); 
