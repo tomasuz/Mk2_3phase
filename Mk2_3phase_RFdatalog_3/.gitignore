@@ -1,1 +1,5 @@
 .pio
+/.cproject
+/.project
+/.settings/
+/.vscode/

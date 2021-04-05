@@ -48,7 +48,7 @@
 
 //  WORKLOAD_CHECK is available for determining how much spare processing time there 
 //  is.  To activate this mode, the #define line below should be included: 
-#define WORKLOAD_CHECK  
+// #define WORKLOAD_CHECK  
 
 #define DEBUG
 
@@ -265,7 +265,8 @@ void configureParamsForSelectedOutputMode()
 void setup() {
   delay (initialDelay * 1000); // allows time to open the Serial Monitor
   
-  Serial.begin(230400);   // initialize Serial interface
+  // Serial.begin(230400);   // initialize Serial interface
+  Serial.begin(500000);
   Serial.println();
   Serial.println();
   Serial.println();
