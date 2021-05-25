@@ -45,6 +45,7 @@
 #define NO_OF_PHASE_RELAYS 2
 #define CYCLES_PER_SECOND 50
 #define DATALOG_PERIOD_IN_SECONDS 1
+#define MAX_FIRING_DELAY_IN_MICROS 9900
 
 // const byte noOfDumploads = 3; 
 const byte noOfDumploads = 1;
@@ -195,7 +196,7 @@ float powerCal[NO_OF_PHASES];
 //
 // Initial values seting moved to setup().....
 // float  phaseCal[NO_OF_PHASES];
-const float phaseCal[NO_OF_PHASES] = {0.5, 0.5, 0.5}; // <- nominal values only
+const float phaseCal[NO_OF_PHASES] = {0.17, 0.17, 0.17}; // <- nominal values only
 int phaseCal_int[NO_OF_PHASES];           // to avoid the need for floating-point maths
 
 // For datalogging purposes, voltageCal has been added too.  Because the range of ADC values is
@@ -219,7 +220,7 @@ unsigned long timeAtStartOfHalfCycleInMicros[NO_OF_PHASES];
 unsigned long firingDelayInMicros[NO_OF_PHASES];
 
 // Arrays for debugging
-int samplesV[NO_OF_PHASES][50];
+// int samplesV[NO_OF_PHASES][50];
 // int samplesI[NO_OF_PHASES][50];
 // float phaseShiftedVminusDCs[NO_OF_PHASES][50];
 // float sampleVminusDCs[NO_OF_PHASES][50];
@@ -300,6 +301,7 @@ void setup() {
 	  energyInBucket[phase] = 0.0;
 	  samplesDuringThisMainsCycle[phase] = 0;
 	  samplesDuringLastMainsCycle[phase] = 32;
+	  firingDelayInMicros[phase] = MAX_FIRING_DELAY_IN_MICROS;
 	  powerCal[phase] = POWERCAL;
     phaseCal_int[phase] = phaseCal[phase] * 256;  // for integer maths
     DCoffset_V_long[phase] = 512L * 256;  // nominal mid-point value of ADC @ x256 scale  
@@ -463,8 +465,8 @@ void calculateFiringDelay(byte phase) {
 	 if (firingDelayInMicros[phase] < 0) {
 		 firingDelayInMicros[phase] = 0;
 	 }
-	 if (firingDelayInMicros[phase] > 9900) {
-		 firingDelayInMicros[phase] = 99900;
+	 if (firingDelayInMicros[phase] > MAX_FIRING_DELAY_IN_MICROS) {
+		 firingDelayInMicros[phase] = MAX_FIRING_DELAY_IN_MICROS;
 	 }
 
 	 // never fire if energy level is below lower threshold (zero power)
@@ -779,21 +781,21 @@ void loop() {
             }
           } 
         }
-#ifndef DEBUG
-        if ((phase == 0) && datalogCountInMainsCycles == 0) {
-          printInfo();
-        }
-#endif        
+//#ifndef DEBUG
+//        if ((phase == 0) && datalogCountInMainsCycles == 0) {
+//          printInfo();
+//        }
+//#endif
     	// end of processing that is specific to positive Vsamples
     	} else { //polarityNow[phase] == NEGATIVE)
     		if (polarityOfLastReading != NEGATIVE) {
     			firstLoopOfHalfCycle[phase] = true;
     		}
-#ifndef DEBUG
-        if ((phase == 0) && datalogCountInMainsCycles == 0) {
-			    printInfo();
-        }
-#endif
+//#ifndef DEBUG
+//        if ((phase == 0) && datalogCountInMainsCycles == 0) {
+//			    printInfo();
+//        }
+//#endif
     	} // end of processing ve going z-c point
     } // end of realV[phase] > 10.0
 
