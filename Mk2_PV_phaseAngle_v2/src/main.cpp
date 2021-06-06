@@ -673,7 +673,7 @@ void controlPhaseSwichRellay(unsigned char phase) {
 }
 
 #ifndef DEBUG
-void printInfo() {
+void printInfo(unsigned char phase) {
     switch(samplesDuringThisMainsCycle[0]) {
           case 0:
             break;
@@ -682,36 +682,38 @@ void printInfo() {
             break;
           case 2:
 //            Serial.println((String) "DCoffset_V_long of phase 0:\t" + DCoffset_V_long[0]);
-            Serial.println ((String) "realPower of phase\t0:\t" + realPower[0]);
+            Serial.println ((String) "realPower of phase\t"+ phase + " :\t" + realPower[phase]);
             break;
           case 3:
 //            Serial.println((String) "DCoffset_I_long of phase 0:\t" + DCoffset_I_long[0]);
-            Serial.println((String) "Real Last Power phase\t0 :\t" + realLastPower[0]);
+            Serial.println((String) "Real Last Power phase\t"+ phase + " :\t" + realLastPower[phase]);
             break;
           case 4:
-            Serial.println((String) "Filtered Real Power phase\t0 :\t" + realFilteredPower[0]);
+            Serial.println((String) "Filtered Real Power phase\t"+ phase + " :\t" + realFilteredPower[phase]);
             break;
           case 5:
-              Serial.print ("Samples of phase\t0:\t");
-              Serial.println (samplesDuringLastMainsCycle[0]);
+              Serial.println ((String) "Samples of phase\t"+ phase + " :\t" + samplesDuringLastMainsCycle[phase]);
               break;
           case 6:
-              Serial.println((String) "realV of phase\t\t0:\t" + ((int)(voltageCal[0] * sqrt(realV[0]))));
+              Serial.println((String) "realV of phase\t\t"+ phase + " :\t" + ((int)(voltageCal[phase] * sqrt(realV[phase]))));
     	        break;
     	    case 7:
 //    	        Serial.print ("realPower of phase\t0:\t");
 //    	        Serial.println (realPower[0]);
-    	    	break;
-    	    case 8:
+            break;
+          case 8:
             Serial.print ("State Of Relays:\t");
-    	        for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
-    	      	  Serial.print (stateOfRelays[relay]);
-    	      	  Serial.print ("\t");
-    	        }
-    	        Serial.println("");
-    	    	break;
-    	    case 9:
-        	    Serial.println((String) "PWMLoadValue \t" + PWMLoadValue[0]);
+              for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
+                Serial.print ((String) stateOfRelays[relay] + "\t");
+              }
+              Serial.println("");
+            break;
+          case 9:
+              Serial.println("PWMLoadValue \t");
+              for (unsigned char load = 0; load < noOfPWMControlledDumploads; load++) {
+                Serial.print((String) PWMLoadValue[load] + "\t");
+              }
+              Serial.println("");
         	    break;
     } // end of case
 }
@@ -804,8 +806,8 @@ void loop() {
       controlPhaseSwichRellay(phase);
     }
 #ifndef DEBUG
-    if ((phase == 0) && datalogCountInMainsCycles == 0) {
-      printInfo();
+    if (datalogCountInMainsCycles == 0 && beyondStartUpPhase) {
+      printInfo(phase);
     }
 #endif
     // End of each loop is for one pair of V & I measurements
