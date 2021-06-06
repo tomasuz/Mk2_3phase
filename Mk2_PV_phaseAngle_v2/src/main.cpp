@@ -47,6 +47,8 @@
 #define DATALOG_PERIOD_IN_SECONDS 1
 #define RELAY_CONTROL_DELAY_IN_SECONDS 20
 
+#define DELAYINMAINSCYCLES 6
+
 // const byte noOfDumploads = 3; 
 const byte noOfDumploads = 0;
 const byte noOfPWMControlledDumploads = 1;
@@ -454,60 +456,62 @@ void controllPWMFiringDelay(unsigned char phase) {
   // start of section to support phase-angle control of triac
   // determines the correct firing delay for a direct-acting trigger
 
-  unsigned char load;
-  for (unsigned char i = 0; i < noOfPWMControlledDumploads; i++) {
+  for (unsigned char load = 0; load < noOfPWMControlledDumploads; load++) {
     if ( loadPhases[load] == phase && delayInMainsCycles[phase] == 0 ) {
-      delayInMainsCycles[phase] = 6;
-      load = i;
-      // The idea is to have autoregulation to minimize power output to grid.
+      // The idea is to have auto regulation to minimize power output to grid.
       // Power must be only imported or 0
       // Assume realEnergy[phase] is negative if we exporting.
       if (realFilteredPower[phase] < -500.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 235) {
-          // TODO dynamic step calculation.
           PWMLoadValue[load] = PWMLoadValue[load] + 20;
+          delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
+          analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
       } else if (realFilteredPower[phase] < -250.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 245) {
-          // TODO dynamic step calculation.
           PWMLoadValue[load] = PWMLoadValue[load] + 10;
+          delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
+          analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
       } else if (realFilteredPower[phase] < -125.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 250) {
-          // TODO dynamic step calculation.
           PWMLoadValue[load] = PWMLoadValue[load] + 5;
+          delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
+          analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
       } else if (realFilteredPower[phase] < -75.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 252) {
-          // TODO dynamic step calculation.
           PWMLoadValue[load] = PWMLoadValue[load] + 3;
+          delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
+          analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
       } else if (realFilteredPower[phase] < 1.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] < 255) {
-          // TODO dynamic step calculation.
           PWMLoadValue[load] = PWMLoadValue[load] + 1;
+          delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
+          analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
       } else if (realFilteredPower[phase] >= 30.0) {
          // now we importing enegry from grid, so lover diverting increasing delay:
     //     if (realPower[phase] > realLastPower[phase]) {
         if (PWMLoadValue[load] > 0) {
-           // TODO dynamic step calculation.
            PWMLoadValue[load] = PWMLoadValue[load] - 1;
+           delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
+           analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         } else {
           logicalPWMLoadState[load] = LOAD_OFF;
         }
       }
-      analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
     } else {
       delayInMainsCycles[phase]--;
     }
@@ -686,7 +690,7 @@ void printInfo(unsigned char phase) {
             break;
           case 3:
 //            Serial.println((String) "DCoffset_I_long of phase 0:\t" + DCoffset_I_long[0]);
-            Serial.println((String) "Real Last Power phase\t"+ phase + " :\t" + realLastPower[phase]);
+            Serial.println((String) "Filtered Real Last Power phase\t"+ phase + " :\t" + realLastPower[phase]);
             break;
           case 4:
             Serial.println((String) "Filtered Real Power phase\t"+ phase + " :\t" + realFilteredPower[phase]);
