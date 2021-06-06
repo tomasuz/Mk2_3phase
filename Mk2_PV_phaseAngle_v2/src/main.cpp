@@ -216,7 +216,7 @@ int phaseCal_int[NO_OF_PHASES];           // to avoid the need for floating-poin
 // similar to the actual range of volts, the optimal value for this cal factor is likely to be
 // close to unity.
 // Initial values seting moved to setup().....
-const float voltageCal[NO_OF_PHASES] = {0.95, 0.95, 0.95}; // compared with Fluke 77 meter
+const float voltageCal[NO_OF_PHASES] = {0.94, 0.94, 0.94}; // compared with Fluke 77 meter
 
 // items for LED monitoring
 // byte ledState, prevLedState;
