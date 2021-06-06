@@ -678,7 +678,7 @@ void controlPhaseSwichRellay(unsigned char phase) {
 
 #ifndef DEBUG
 void printInfo(unsigned char phase) {
-    switch(samplesDuringThisMainsCycle[0]) {
+    switch(samplesDuringThisMainsCycle[phase]) {
           case 0:
             break;
           case 1:
@@ -696,29 +696,33 @@ void printInfo(unsigned char phase) {
             Serial.println((String) "Filtered Real Power phase\t"+ phase + " :\t" + realFilteredPower[phase]);
             break;
           case 5:
-              Serial.println ((String) "Samples of phase\t"+ phase + " :\t" + samplesDuringLastMainsCycle[phase]);
-              break;
+            Serial.println ((String) "Samples of phase\t"+ phase + " :\t" + samplesDuringLastMainsCycle[phase]);
+            break;
           case 6:
-              Serial.println((String) "realV of phase\t\t"+ phase + " :\t" + ((int)(voltageCal[phase] * sqrt(realV[phase]))));
-    	        break;
+            Serial.println((String) "realV of phase\t\t"+ phase + " :\t" + ((int)(voltageCal[phase] * sqrt(realV[phase]))));
+    	      break;
     	    case 7:
 //    	        Serial.print ("realPower of phase\t0:\t");
 //    	        Serial.println (realPower[0]);
             break;
           case 8:
-            Serial.print ("State Of Relays:\t");
+            if (phase == 0) {
+              Serial.print ("State Of Relays:\t");
               for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
                 Serial.print ((String) stateOfRelays[relay] + "\t");
               }
               Serial.println("");
+            }
             break;
           case 9:
+            if (phase == 0) {
               Serial.println("PWMLoadValue \t");
               for (unsigned char load = 0; load < noOfPWMControlledDumploads; load++) {
                 Serial.print((String) PWMLoadValue[load] + "\t");
               }
               Serial.println("");
-        	    break;
+            }
+        	  break;
     } // end of case
 }
 #endif
