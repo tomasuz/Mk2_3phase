@@ -272,7 +272,8 @@ void setup()
   delay (initialDelay * 1000); // allows time to open the Serial Monitor
   
 //  Serial.begin(9600);   // initialize Serial interface
-  Serial.begin(230400);   // initialize Serial interface
+//  Serial.begin(230400);   // initialize Serial interface
+  Serial.begin(500000);
   Serial.println();
   Serial.println();
   Serial.println();
