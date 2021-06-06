@@ -156,7 +156,7 @@ float realPower[NO_OF_PHASES];
 float realLastPower[NO_OF_PHASES];
 float realFilteredPower[NO_OF_PHASES];
 
-const float POWERCAL = 0.055;  // To convert the product of raw V & I samples into Joules.
+const float POWERCAL = 0.06;  // To convert the product of raw V & I samples into Joules.
 // float VOLTAGECAL; // To convert raw voltage samples into volts.  Used for determining when
 // the trigger device can be safely armed
 // Units are Joules per ADC-level squared.  Used for converting the product of
