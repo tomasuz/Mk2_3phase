@@ -47,7 +47,7 @@
 #define DATALOG_PERIOD_IN_SECONDS 1
 #define RELAY_CONTROL_DELAY_IN_SECONDS 20
 
-#define DELAYINMAINSCYCLES 6
+#define DELAYINMAINSCYCLES 10
 
 // const byte noOfDumploads = 3; 
 const byte noOfDumploads = 0;
@@ -158,7 +158,7 @@ float realPower[NO_OF_PHASES];
 float realLastPower[NO_OF_PHASES];
 float realFilteredPower[NO_OF_PHASES];
 
-const float POWERCAL = 0.06;  // To convert the product of raw V & I samples into Joules.
+const float POWERCAL = 0.061;  // To convert the product of raw V & I samples into Joules.
 // float VOLTAGECAL; // To convert raw voltage samples into volts.  Used for determining when
 // the trigger device can be safely armed
 // Units are Joules per ADC-level squared.  Used for converting the product of
@@ -228,10 +228,14 @@ const float voltageCal[NO_OF_PHASES] = {0.94, 0.94, 0.94}; // compared with Fluk
 // float energyLevelAtLastLedPulse;
 
 // items for phase-angle control of triac
-boolean firstLoopOfHalfCycle[NO_OF_PHASES];
+// boolean firstLoopOfHalfCycle[NO_OF_PHASES];
 boolean phaseAngleTriggerActivated[noOfDumploads];
 
 // Arrays for debugging
+int logindex = 0;
+int samplesV[50];
+
+// int logindex[NO_OF_PHASES]
 // int samplesV[NO_OF_PHASES][50];
 // int samplesI[NO_OF_PHASES][50];
 // float phaseShiftedVminusDCs[NO_OF_PHASES][50];
@@ -302,7 +306,7 @@ void setup() {
   sei();                 // Enable Global Interrupts
 
   for (byte phase = 0; phase < NO_OF_PHASES; phase++) {
-	  firstLoopOfHalfCycle[phase] = false;
+//  firstLoopOfHalfCycle[phase] = false;
 	  sumP[phase] = 0;
     for (byte i = 0; i < 7; i++) {
       lastSumP[i][phase] = 0;
@@ -321,7 +325,7 @@ void setup() {
     phaseCal_int[phase] = phaseCal[phase] * 256;  // for integer maths
     DCoffset_V_long[phase] = 512L * 256;  // nominal mid-point value of ADC @ x256 scale  
     DCoffset_I_long[phase] = 512L * 256;
-//    voltageCal[phase] = 1.03;
+//    logindex[phase] = 0;
 #ifndef DEBUG
 	  Serial.print ( "powerCal for L"); Serial.print(phase + 1);
 	  Serial.print (" =    "); Serial.println (powerCal[phase], 4);
@@ -501,7 +505,7 @@ void controllPWMFiringDelay(unsigned char phase) {
           delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
           analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
-      } else if (realFilteredPower[phase] >= 30.0) {
+      } else if (realFilteredPower[phase] >= 50.0) {
          // now we importing enegry from grid, so lover diverting increasing delay:
     //     if (realPower[phase] > realLastPower[phase]) {
         if (PWMLoadValue[load] > 0) {
@@ -512,6 +516,11 @@ void controllPWMFiringDelay(unsigned char phase) {
           logicalPWMLoadState[load] = LOAD_OFF;
         }
       }
+      logindex++;
+      if (logindex >= 50) {
+        logindex = 0;
+      }
+      samplesV[logindex] = PWMLoadValue[load];
     } else {
       delayInMainsCycles[phase]--;
     }
@@ -702,10 +711,6 @@ void printInfo(unsigned char phase) {
             Serial.println((String) "realV of phase\t\t"+ phase + " :\t" + ((int)(voltageCal[phase] * sqrt(realV[phase]))));
     	      break;
     	    case 7:
-//    	        Serial.print ("realPower of phase\t0:\t");
-//    	        Serial.println (realPower[0]);
-            break;
-          case 8:
             if (phase == 0) {
               Serial.print ("State Of Relays:\t");
               for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
@@ -714,9 +719,21 @@ void printInfo(unsigned char phase) {
               Serial.println("");
             }
             break;
+          case 8:
+            if (phase == 0) {
+              Serial.print ("History:\t");
+              for (int i = logindex; i >= 0; i--) {
+                Serial.print ((String) samplesV[i] + "\t");
+              }
+//              for (unsigned char i = 49; i > logindex; i--) {
+//                Serial.print ((String) samplesV[i] + "\t");
+//              }
+//              Serial.println("");
+            }
+            break;
           case 9:
             if (phase == 0) {
-              Serial.println("PWMLoadValue \t");
+              Serial.print("PWMLoadValue \t");
               for (unsigned char load = 0; load < noOfPWMControlledDumploads; load++) {
                 Serial.print((String) PWMLoadValue[load] + "\t");
               }
@@ -728,7 +745,7 @@ void printInfo(unsigned char phase) {
 #endif
 
 void loop() {
-  static unsigned int datalogCountInMainsCycles;
+  static unsigned int datalogCountInMainsCycles[NO_OF_PHASES];
 //  static unsigned int datalogCountInMainsCycles
 
   // each loop is for one pair of V & I measurements
@@ -757,11 +774,7 @@ void loop() {
         if (polarityOfLastReading != POSITIVE) {
     			// This is the start of a new mains cycle (just after the +ve going z-c point)
     			cycleCount[phase]++; // for stats only
-    			firstLoopOfHalfCycle[phase] = true;
-//          if (phase == 0) {
-//            Serial.println((String) "samplesDuringThisMainsCycle of phase\t" + phase + ":\t" + samplesDuringThisMainsCycle[phase]);
-//          }
-
+//    		firstLoopOfHalfCycle[phase] = true;
     			// checkLedStatus(); // a really useful function, but can be commented out if not required
           calculateOfsetsAndEnergy(phase);
           if (beyondStartUpPhase != true) {
@@ -775,7 +788,7 @@ void loop() {
     			//      energyInBucket = energyInBucket_4trial; // over-ride the measured value
     			//        triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
     			// clear the per-cycle accumulators for use in this new mains cycle.
-    			sumVOfLastMainsCycle[phase] = sumV[phase];
+          sumVOfLastMainsCycle[phase] = sumV[phase];
     	    for (byte i = 0; i < 6; i++) {
     	      lastSumP[i][phase] = lastSumP[i+1][phase];
     	    }
@@ -789,32 +802,30 @@ void loop() {
     			// end of processing that is specific to the first +ve Vsample in each new mains cycle
     		}
         // still processing POSITIVE Vsamples ...
-        if ((phase == 0) && samplesDuringThisMainsCycle[0] == 1) {
-          if (beyondStartUpPhase) {
+        if (samplesDuringThisMainsCycle[phase] == 1 && beyondStartUpPhase) {
             // This code is executed once per 20mS, shortly after the start of each new
             // mains cycle on phase 0.
             //
-            datalogCountInMainsCycles++;
-            if (datalogCountInMainsCycles >= maxDatalogCountInMainsCycles) {
-              datalogCountInMainsCycles = 0;
+            datalogCountInMainsCycles[phase]++;
+            if (datalogCountInMainsCycles[phase] >= maxDatalogCountInMainsCycles) {
+              datalogCountInMainsCycles[phase] = 0;
             }
-          } 
         }
     	// end of processing that is specific to positive Vsamples
     	} else { //polarityNow[phase] == NEGATIVE)
     		if (polarityOfLastReading != NEGATIVE) {
-    			firstLoopOfHalfCycle[phase] = true;
+//    		firstLoopOfHalfCycle[phase] = true;
     		}
     	} // end of processing ve going z-c point
     } // end of realV[phase] > 10.0
 
     processSamplePair(phase);
     loopCount = 0;
-    if (datalogCountInMainsCycles == 0 && beyondStartUpPhase) {
+    if (datalogCountInMainsCycles[0] == 0 && beyondStartUpPhase) {
       controlPhaseSwichRellay(phase);
     }
 #ifndef DEBUG
-    if (datalogCountInMainsCycles == 0 && beyondStartUpPhase) {
+    if (datalogCountInMainsCycles[phase] == 0 && beyondStartUpPhase) {
       printInfo(phase);
     }
 #endif
