@@ -70,12 +70,13 @@
                 {% else %}                      {% set tr = states('input_number.transfer_we_day')|float(0) %}
                 {% endif %}
               {% endif %}
+              {% set base_price = item.price / 1000 %}
               {% set all.prices = all.prices + [{
                 'start_time': start_dt.isoformat(),
                 'end_time': (item.end | as_datetime | as_local).isoformat(),
-                'price_per_kwh': item.price / 1000,
-                'transfer_component': tr,
-                'price_with_transfer': (item.price / 1000) + tr
+                'price_per_kwh': base_price + tr,
+                'base_price': base_price,
+                'transfer_component': tr
               }] %}
             {% endfor %}
           {% endif %}
@@ -95,12 +96,13 @@
                 {% else %}                      {% set tr = states('input_number.transfer_we_day')|float(0) %}
                 {% endif %}
               {% endif %}
+              {% set base_price = item.price / 1000 %}
               {% set all.prices = all.prices + [{
                 'start_time': start_dt.isoformat(),
                 'end_time': (item.end | as_datetime | as_local).isoformat(),
-                'price_per_kwh': item.price / 1000,
-                'transfer_component': tr,
-                'price_with_transfer': (item.price / 1000) + tr
+                'price_per_kwh': base_price + tr,
+                'base_price': base_price,
+                'transfer_component': tr
               }] %}
             {% endfor %}
           {% endif %}
