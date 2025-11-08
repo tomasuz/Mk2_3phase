@@ -1,0 +1,72 @@
+  - sensor:
+      - name: "Energy Price Block"
+        unique_id: energy_price_block
+        state: >
+          {% set wd = now().weekday() in [0,1,2,3,4] %}
+          {% set t  = now().hour*60 + now().minute %}
+          {% if wd %}
+            {% if t >= 22*60 or t < 5*60 %} Naktis (Darbo diena)
+            {% elif t < 7*60 %}              Rytas (Darbo diena)
+            {% elif t < 17*60 %}             Diena (Darbo diena)
+            {% else %}                       Vakaras (Darbo diena)
+            {% endif %}
+          {% else %}
+            {% if t >= 22*60 or t < 7*60 %} Naktis (Savaitgalis)
+            {% else %}                      Diena (Savaitgalis)
+            {% endif %}
+          {% endif %}
+
+      - name: "Energy Price – Transfer Component"
+        unique_id: energy_price_transfer_component
+        unit_of_measurement: "€/kWh"
+        state: >
+          {% set wd = now().weekday() in [0,1,2,3,4] %}
+          {% set t  = now().hour*60 + now().minute %}
+          {% if wd %}
+            {% if t >= 22*60 or t < 5*60 %} {{ states('input_number.transfer_wd_night')|float(0) }}
+            {% elif t < 7*60 %}              {{ states('input_number.transfer_wd_morning')|float(0) }}
+            {% elif t < 17*60 %}             {{ states('input_number.transfer_wd_day')|float(0) }}
+            {% else %}                       {{ states('input_number.transfer_wd_evening')|float(0) }}
+            {% endif %}
+          {% else %}
+            {% if t >= 22*60 or t < 7*60 %} {{ states('input_number.transfer_we_night')|float(0) }}
+            {% else %}                      {{ states('input_number.transfer_we_day')|float(0) }}
+            {% endif %}
+          {% endif %}
+
+      - name: "Energy Price Total"
+        unique_id: energy_price_total
+        unit_of_measurement: "€/kWh"
+        device_class: monetary
+        state_class: measurement
+        attributes:
+          base_entity: sensor.nord_pool_lt_current_price
+        state: >
+          {# --- Base Nord Pool price (adjust the entity/attribute if needed) --- #}
+          {% set base = states('sensor.nord_pool_lt_current_price')|float(none) %}
+          {# If your integration exposes 'current_price' as an attribute, use:
+             {% set base = state_attr('sensor.nord_pool_lt_current_price','current_price')|float(none) %} #}
+
+          {% if base is not number %}
+            {{ none }}
+          {% else %}
+            {% set wd = now().weekday() in [0,1,2,3,4] %}
+            {% set t  = now().hour*60 + now().minute %}
+
+            {% if wd %}
+              {% if t >= 22*60 or t < 5*60 %} {% set tr = states('input_number.transfer_wd_night')|float(0) %}
+              {% elif t < 7*60 %}              {% set tr = states('input_number.transfer_wd_morning')|float(0) %}
+              {% elif t < 17*60 %}             {% set tr = states('input_number.transfer_wd_day')|float(0) %}
+              {% else %}                       {% set tr = states('input_number.transfer_wd_evening')|float(0) %}
+              {% endif %}
+            {% else %}
+              {% if t >= 22*60 or t < 7*60 %} {% set tr = states('input_number.transfer_we_night')|float(0) %}
+              {% else %}                      {% set tr = states('input_number.transfer_we_day')|float(0) %}
+              {% endif %}
+            {% endif %}
+
+            {% set vat_p = states('input_number.energy_price_vat_percent')|float(0) %}
+            {% set vat_f = 1 + vat_p/100 %}
+            {{ (base + tr) * vat_f }}
+          {% endif %}
+
