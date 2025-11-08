@@ -1,109 +1,107 @@
 - trigger:
-      - platform: time_pattern
-        hours: "/1"
-      - platform: homeassistant
-        event: start
+    - platform: time_pattern
+      hours: "/1"
+    - platform: homeassistant
+      event: start
 
-    action:
-      - action: nordpool.get_prices_for_date
-        data:
-          config_entry: 01K94Z56N4XFKEC4693GNGTM5Z
-          date: "{{ now().date() }}"
-          areas: LT
-          currency: EUR
-        response_variable: today_price
+  action:
+    - action: nordpool.get_prices_for_date
+      data:
+        config_entry: 01K94Z56N4XFKEC4693GNGTM5Z
+        date: "{{ now().date() }}"
+        areas: LT
+        currency: EUR
+      response_variable: today_price
 
-      - action: nordpool.get_prices_for_date
-        data:
-          config_entry: 01K94Z56N4XFKEC4693GNGTM5Z
-          date: "{{ now().date() + timedelta(days=1) }}"
-          areas: LT
-          currency: EUR
-        response_variable: tomorrow_price
+    - action: nordpool.get_prices_for_date
+      data:
+        config_entry: 01K94Z56N4XFKEC4693GNGTM5Z
+        date: "{{ now().date() + timedelta(days=1) }}"
+        areas: LT
+        currency: EUR
+      response_variable: tomorrow_price
 
-    sensor:
-      - name: Combined Nordpool Prices
-        unique_id: combined_nordpool_prices
-        state: "{{ now().isoformat() }}"
-        attributes:
-          data: >
-            {% set all = namespace(prices=[]) %}
-            {% if today_price and today_price['LT'] is defined %}
-              {% for item in today_price['LT'] %}
-                {% set all.prices = all.prices + [{
-                  'start_time': (item.start | as_datetime | as_local).isoformat(),
-                  'end_time': (item.end | as_datetime | as_local).isoformat(),
-                  'price_per_kwh': item.price / 1000
-                }] %}
-              {% endfor %}
-            {% endif %}
-            {% if tomorrow_price and tomorrow_price['LT'] is defined %}
-              {% for item in tomorrow_price['LT'] %}
-                {% set all.prices = all.prices + [{
-                  'start_time': (item.start | as_datetime | as_local).isoformat(),
-                  'end_time': (item.end | as_datetime | as_local).isoformat(),
-                  'price_per_kwh': item.price / 1000
-                }] %}
-              {% endfor %}
-            {% endif %}
-            {{ all.prices | sort(attribute='start_time') }}
+  sensor:
+    - name: Combined Nordpool Prices
+      unique_id: combined_nordpool_prices
+      state: "{{ now().isoformat() }}"
+      attributes:
+        data: >
+          {% set all = namespace(prices=[]) %}
+          {% if today_price and today_price['LT'] is defined %}
+            {% for item in today_price['LT'] %}
+              {% set all.prices = all.prices + [{
+                'start_time': (item.start | as_datetime | as_local).isoformat(),
+                'end_time': (item.end | as_datetime | as_local).isoformat(),
+                'price_per_kwh': item.price / 1000
+              }] %}
+            {% endfor %}
+          {% endif %}
+          {% if tomorrow_price and tomorrow_price['LT'] is defined %}
+            {% for item in tomorrow_price['LT'] %}
+              {% set all.prices = all.prices + [{
+                'start_time': (item.start | as_datetime | as_local).isoformat(),
+                'end_time': (item.end | as_datetime | as_local).isoformat(),
+                'price_per_kwh': item.price / 1000
+              }] %}
+            {% endfor %}
+          {% endif %}
+          {{ all.prices | sort(attribute='start_time') }}
 
-      - name: Combined Nordpool Prices with Transfer
-        unique_id: combined_nordpool_prices_with_transfer
-        state: "{{ now().isoformat() }}"
-        attributes:
-          data: >
-            {% set all = namespace(prices=[]) %}
-            {% if today_price and today_price['LT'] is defined %}
-              {% for item in today_price['LT'] %}
-                {% set start_dt = item.start | as_datetime | as_local %}
-                {% set wd = start_dt.weekday() in [0,1,2,3,4] %}
-                {% set t = start_dt.hour * 60 + start_dt.minute %}
-                {% if wd %}
-                  {% if t >= 22*60 or t < 5*60 %} {% set tr = states('input_number.transfer_wd_night')|float(0) %}
-                  {% elif t < 7*60 %}              {% set tr = states('input_number.transfer_wd_morning')|float(0) %}
-                  {% elif t < 17*60 %}             {% set tr = states('input_number.transfer_wd_day')|float(0) %}
-                  {% else %}                       {% set tr = states('input_number.transfer_wd_evening')|float(0) %}
-                  {% endif %}
-                {% else %}
-                  {% if t >= 22*60 or t < 7*60 %} {% set tr = states('input_number.transfer_we_night')|float(0) %}
-                  {% else %}                      {% set tr = states('input_number.transfer_we_day')|float(0) %}
-                  {% endif %}
+    - name: Combined Nordpool Prices with Transfer
+      unique_id: combined_nordpool_prices_with_transfer
+      state: "{{ now().isoformat() }}"
+      attributes:
+        data: >
+          {% set all = namespace(prices=[]) %}
+          {% if today_price and today_price['LT'] is defined %}
+            {% for item in today_price['LT'] %}
+              {% set start_dt = item.start | as_datetime | as_local %}
+              {% set wd = start_dt.weekday() in [0,1,2,3,4] %}
+              {% set t = start_dt.hour * 60 + start_dt.minute %}
+              {% if wd %}
+                {% if t >= 22*60 or t < 5*60 %} {% set tr = states('input_number.transfer_wd_night')|float(0) %}
+                {% elif t < 7*60 %}              {% set tr = states('input_number.transfer_wd_morning')|float(0) %}
+                {% elif t < 17*60 %}             {% set tr = states('input_number.transfer_wd_day')|float(0) %}
+                {% else %}                       {% set tr = states('input_number.transfer_wd_evening')|float(0) %}
                 {% endif %}
-                {% set base_price = item.price / 1000 %}
-                {% set all.prices = all.prices + [{
-                  'start_time': start_dt.isoformat(),
-                  'end_time': (item.end | as_datetime | as_local).isoformat(),
-                  'price_per_kwh': base_price + tr,
-                  'base_price': base_price,
-                  'transfer_component': tr
-                }] %}
-              {% endfor %}
-            {% endif %}
-            {% if tomorrow_price and tomorrow_price['LT'] is defined %}
-              {% for item in tomorrow_price['LT'] %}
-                {% set start_dt = item.start | as_datetime | as_local %}
-                {% set wd = start_dt.weekday() in [0,1,2,3,4] %}
-                {% set t = start_dt.hour * 60 + start_dt.minute %}
-                {% if wd %}
-                  {% if t >= 22*60 or t < 5*60 %} {% set tr = states('input_number.transfer_wd_night')|float(0) %}
-                  {% elif t < 7*60 %}              {% set tr = states('input_number.transfer_wd_morning')|float(0) %}
-                  {% elif t < 17*60 %}             {% set tr = states('input_number.transfer_wd_day')|float(0) %}
-                  {% else %}                       {% set tr = states('input_number.transfer_wd_evening')|float(0) %}
-                  {% endif %}
-                {% else %}
-                  {% if t >= 22*60 or t < 7*60 %} {% set tr = states('input_number.transfer_we_night')|float(0) %}
-                  {% else %}                      {% set tr = states('input_number.transfer_we_day')|float(0) %}
-                  {% endif %}
+              {% else %}
+                {% if t >= 22*60 or t < 7*60 %} {% set tr = states('input_number.transfer_we_night')|float(0) %}
+                {% else %}                      {% set tr = states('input_number.transfer_we_day')|float(0) %}
                 {% endif %}
-                {% set base_price = item.price / 1000 %}
-                {% set all.prices = all.prices + [{
-                  'start_time': start_dt.isoformat(),
-                  'end_time': (item.end | as_datetime | as_local).isoformat(),
-                  'price_per_kwh': base_price + tr,
-                  'base_price': base_price,
-                  'transfer_component': tr
-                }] %}
-              {% endfor %}
-            {% endif %}
-            {{ all.prices | sort(attribute='start_time') }}
+              {% endif %}
+              {% set all.prices = all.prices + [{
+                'start_time': start_dt.isoformat(),
+                'end_time': (item.end | as_datetime | as_local).isoformat(),
+                'price_per_kwh': item.price / 1000,
+                'transfer_component': tr,
+                'price_with_transfer': (item.price / 1000) + tr
+              }] %}
+            {% endfor %}
+          {% endif %}
+          {% if tomorrow_price and tomorrow_price['LT'] is defined %}
+            {% for item in tomorrow_price['LT'] %}
+              {% set start_dt = item.start | as_datetime | as_local %}
+              {% set wd = start_dt.weekday() in [0,1,2,3,4] %}
+              {% set t = start_dt.hour * 60 + start_dt.minute %}
+              {% if wd %}
+                {% if t >= 22*60 or t < 5*60 %} {% set tr = states('input_number.transfer_wd_night')|float(0) %}
+                {% elif t < 7*60 %}              {% set tr = states('input_number.transfer_wd_morning')|float(0) %}
+                {% elif t < 17*60 %}             {% set tr = states('input_number.transfer_wd_day')|float(0) %}
+                {% else %}                       {% set tr = states('input_number.transfer_wd_evening')|float(0) %}
+                {% endif %}
+              {% else %}
+                {% if t >= 22*60 or t < 7*60 %} {% set tr = states('input_number.transfer_we_night')|float(0) %}
+                {% else %}                      {% set tr = states('input_number.transfer_we_day')|float(0) %}
+                {% endif %}
+              {% endif %}
+              {% set all.prices = all.prices + [{
+                'start_time': start_dt.isoformat(),
+                'end_time': (item.end | as_datetime | as_local).isoformat(),
+                'price_per_kwh': item.price / 1000,
+                'transfer_component': tr,
+                'price_with_transfer': (item.price / 1000) + tr
+              }] %}
+            {% endfor %}
+          {% endif %}
+          {{ all.prices | sort(attribute='start_time') }}
