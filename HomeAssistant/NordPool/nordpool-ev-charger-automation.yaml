@@ -1,47 +1,199 @@
 # EV Charger Automation based on Nord Pool prices with transfer
 # This file is suitable for !include_dir_merge_list
 # Uses sensor.energy_price_total which provides current price with transfer
+# Priority 2: EV Charger (variable power based on current limit)
+# Total current limit: 17000 mA (17 A) - sensor.l3_current provides data in mA
 
-# Automation to turn ON EV charger when price drops below low_energy_price_cap
+# EV charger current at different current limits:
+# 6A = 6000 mA, 8A = 8000 mA, 10A = 10000 mA, 13A = 13000 mA, 16A = 16000 mA
+
+# Automation: EV Charger - Turn ON when price is low and sets appropriate current limit
 - id: ev_charger_turn_on_low_price
-  alias: "EV Charger - Turn ON when price < low_energy_price_cap"
-  description: "Turns on EV charger when energy price with transfer drops below low energy price cap"
+  alias: "EV Charger - Turn ON when price < low_energy_price_cap (Priority 2)"
+  description: "Turns on EV charger when energy price is low, sets current limit based on available current"
   trigger:
     - platform: state
       entity_id: sensor.energy_price_total
     - platform: state
       entity_id: input_number.low_energy_price_cap
+    - platform: state
+      entity_id: sensor.l3_current
     - platform: homeassistant
       event: start
+    - platform: state
+      entity_id: light.sonoff
+    - platform: state
+      entity_id: switch.tasmota_2
   condition:
     - condition: template
       value_template: "{{ states('sensor.energy_price_total') | float(0) < states('input_number.low_energy_price_cap') | float(0.10) }}"
     - condition: state
       entity_id: switch.ev_charger_ev_charger_switch
       state: "off"
+    - condition: template
+      value_template: >
+        {% set total_limit = 17000.0 %}
+        {% set current_consumption = states('sensor.l3_current') | float(0) %}
+        {% set available_current = total_limit - current_consumption %}
+        {# Need at least 6000 mA (6A) to turn on EV charger #}
+        {{ available_current >= 6000 }}
   action:
+    - service: number.set_value
+      target:
+        entity_id: number.ev_charger_ev_charger_max_current
+      data:
+        value: >
+          {% set total_limit = 17000.0 %}
+          {% set current_consumption = states('sensor.l3_current') | float(0) %}
+          {% set available_current = total_limit - current_consumption %}
+          {# EV charger current at different current limits: #}
+          {# 16A = 16000 mA, 13A = 13000 mA, 10A = 10000 mA, 8A = 8000 mA, 6A = 6000 mA #}
+          {% if available_current >= 16000 %}
+            16
+          {% elif available_current >= 13000 %}
+            13
+          {% elif available_current >= 10000 %}
+            10
+          {% elif available_current >= 8000 %}
+            8
+          {% else %}
+            6
+          {% endif %}
+    - delay: "00:00:02"
     - service: switch.turn_on
       target:
         entity_id: switch.ev_charger_ev_charger_switch
     - service: logbook.log
       data:
         name: EV Charger
-        message: "Turned ON - Price is {{ states('sensor.energy_price_total') }} €/kWh (below {{ states('input_number.low_energy_price_cap') | float(0.10) }} €/kWh)"
+        message: >
+          {% set total_limit = 17000.0 %}
+          {% set current_consumption = states('sensor.l3_current') | float(0) %}
+          {% set available_current = total_limit - current_consumption %}
+          {% if available_current >= 16000 %}
+            {% set current_limit = 16 %}
+            {% set current_used = 16000 %}
+          {% elif available_current >= 13000 %}
+            {% set current_limit = 13 %}
+            {% set current_used = 13000 %}
+          {% elif available_current >= 10000 %}
+            {% set current_limit = 10 %}
+            {% set current_used = 10000 %}
+          {% elif available_current >= 8000 %}
+            {% set current_limit = 8 %}
+            {% set current_used = 8000 %}
+          {% else %}
+            {% set current_limit = 6 %}
+            {% set current_used = 6000 %}
+          {% endif %}
+          Turned ON - Price: {{ states('sensor.energy_price_total') | round(3) }} €/kWh,
+          Current limit: {{ current_limit }}A ({{ (current_used / 1000) | round(2) }} A),
+          Available current: {{ (available_current / 1000) | round(2) }} A
         entity_id: switch.ev_charger_ev_charger_switch
   mode: single
 
-# Automation to turn OFF EV charger slightly before price rises above low_energy_price_cap
-# This checks upcoming prices and turns off a few minutes before the price change
+# Automation: EV Charger - Adjust current limit when current availability changes
+# Adjusts EV charger current limit if more current becomes available or if current is constrained
+- id: ev_charger_adjust_current_limit
+  alias: "EV Charger - Adjust current limit based on available current"
+  description: "Adjusts EV charger current limit when current availability changes"
+  trigger:
+    - platform: state
+      entity_id: sensor.l3_current
+    - platform: state
+      entity_id: light.sonoff
+    - platform: state
+      entity_id: switch.tasmota_2
+  condition:
+    - condition: state
+      entity_id: switch.ev_charger_ev_charger_switch
+      state: "on"
+    - condition: template
+      value_template: >
+        {% set total_limit = 17000.0 %}
+        {% set current_consumption = states('sensor.l3_current') | float(0) %}
+        {% set current_limit = states('number.ev_charger_ev_charger_max_current') | int(0) %}
+        {# Calculate available current by adding back what we assume the EV is using (its limit) #}
+        {# This gives us the total capacity available for the EV charger #}
+        {% set available_current = (total_limit - current_consumption) + (current_limit * 1000) %}
+        
+        {% if available_current >= 16000 %}
+          {% set optimal_limit = 16 %}
+        {% elif available_current >= 13000 %}
+          {% set optimal_limit = 13 %}
+        {% elif available_current >= 10000 %}
+          {% set optimal_limit = 10 %}
+        {% elif available_current >= 8000 %}
+          {% set optimal_limit = 8 %}
+        {% elif available_current >= 6000 %}
+          {% set optimal_limit = 6 %}
+        {% else %}
+          {% set optimal_limit = 0 %}
+        {% endif %}
+        {# Only adjust if different and we have enough current for at least 6A (6000 mA) #}
+        {{ optimal_limit != current_limit and available_current >= 6000 }}
+  action:
+    - service: number.set_value
+      target:
+        entity_id: number.ev_charger_ev_charger_max_current
+      data:
+        value: >
+          {% set total_limit = 17000.0 %}
+          {% set current_consumption = states('sensor.l3_current') | float(0) %}
+          {% set current_limit = states('number.ev_charger_ev_charger_max_current') | int(0) %}
+          {% set available_current = (total_limit - current_consumption) + (current_limit * 1000) %}
+          {% if available_current >= 16000 %}
+            16
+          {% elif available_current >= 13000 %}
+            13
+          {% elif available_current >= 10000 %}
+            10
+          {% elif available_current >= 8000 %}
+            8
+          {% else %}
+            6
+          {% endif %}
+    - service: logbook.log
+      data:
+        name: EV Charger
+        message: >
+          {% set total_limit = 17000.0 %}
+          {% set current_consumption = states('sensor.l3_current') | float(0) %}
+          {% set current_limit_setting = states('number.ev_charger_ev_charger_max_current') | int(0) %}
+          {% set available_current = (total_limit - current_consumption) + (current_limit_setting * 1000) %}
+          {% if available_current >= 16000 %}
+            {% set new_limit = 16 %}
+            {% set current_used = 16000 %}
+          {% elif available_current >= 13000 %}
+            {% set new_limit = 13 %}
+            {% set current_used = 13000 %}
+          {% elif available_current >= 10000 %}
+            {% set new_limit = 10 %}
+            {% set current_used = 10000 %}
+          {% elif available_current >= 8000 %}
+            {% set new_limit = 8 %}
+            {% set current_used = 8000 %}
+          {% else %}
+            {% set new_limit = 6 %}
+            {% set current_used = 6000 %}
+          {% endif %}
+          Current limit adjusted to {{ new_limit }}A ({{ (current_used / 1000) | round(2) }} A),
+          Available current: {{ (available_current / 1000) | round(2) }} A
+        entity_id: switch.ev_charger_ev_charger_switch
+  mode: single
+
+# Automation: EV Charger - Turn OFF when price rises above low_energy_price_cap
+# This checks upcoming prices and turns off 0.5 minutes before the price change
 - id: ev_charger_turn_off_before_price_rise
   alias: "EV Charger - Turn OFF before price rises above low_energy_price_cap"
-  description: "Turns off EV charger 2 minutes before price rises above low energy price cap"
+  description: "Turns off EV charger 0.5 minutes before price rises above low energy price cap"
   trigger:
     - platform: state
       entity_id: sensor.energy_price_total
     - platform: state
       entity_id: input_number.low_energy_price_cap
     - platform: time_pattern
-      minutes: "/5"
+      seconds: "/30"
     - platform: state
       entity_id: sensor.combined_nordpool_prices_with_transfer
       attribute: data
@@ -54,14 +206,14 @@
         # Condition 1: Price is already at or above low_energy_price_cap
         - condition: template
           value_template: "{{ states('sensor.energy_price_total') | float(0) >= (states('input_number.low_energy_price_cap') | float(0.10)) - 0.001 }}"
-        # Condition 2: Price will rise above low_energy_price_cap within 2 minutes (from time_pattern/timeline trigger)
+        # Condition 2: Price will rise above low_energy_price_cap within 0.5 minutes (from time_pattern/timeline trigger)
         - condition: template
           value_template: >
             {% set price_cap = states('input_number.low_energy_price_cap') | float(0.10) %}
             {% set price_data = state_attr('sensor.combined_nordpool_prices_with_transfer', 'data') %}
             {% if price_data is iterable and price_data is not string %}
               {% set now_ts = now().timestamp() %}
-              {% set check_time = now_ts + 120 %}
+              {% set check_time = now_ts + 30 %}
               {% set current_price = none %}
               {% set next_price = none %}
               {% for price_entry in price_data %}
@@ -79,7 +231,7 @@
                 {% if next_price is not none and next_price.price_per_kwh >= price_cap %}
                   {% set next_start = next_price.start_time | as_datetime | as_local | as_timestamp %}
                   {% set time_until = next_start - now_ts %}
-                  {{ time_until <= 120 and time_until > 0 }}
+                  {{ time_until <= 30 and time_until > 0 }}
                 {% else %}
                   false
                 {% endif %}
@@ -113,8 +265,7 @@
           {% if current_price is not none and current_price >= price_cap %}
             Turned OFF - Price is {{ current_price | round(3) }} €/kWh (at or above {{ price_cap }} €/kWh)
           {% else %}
-            Turned OFF - Price will rise above {{ price_cap }} €/kWh within 2 minutes
+            Turned OFF - Price will rise above {{ price_cap }} €/kWh within 0.5 minutes
           {% endif %}
         entity_id: switch.ev_charger_ev_charger_switch
   mode: single
-
