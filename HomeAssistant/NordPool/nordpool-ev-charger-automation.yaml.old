@@ -1,0 +1,120 @@
+# EV Charger Automation based on Nord Pool prices with transfer
+# This file is suitable for !include_dir_merge_list
+# Uses sensor.energy_price_total which provides current price with transfer
+
+# Automation to turn ON EV charger when price drops below low_energy_price_cap
+- id: ev_charger_turn_on_low_price
+  alias: "EV Charger - Turn ON when price < low_energy_price_cap"
+  description: "Turns on EV charger when energy price with transfer drops below low energy price cap"
+  trigger:
+    - platform: state
+      entity_id: sensor.energy_price_total
+    - platform: state
+      entity_id: input_number.low_energy_price_cap
+    - platform: homeassistant
+      event: start
+  condition:
+    - condition: template
+      value_template: "{{ states('sensor.energy_price_total') | float(0) < states('input_number.low_energy_price_cap') | float(0.10) }}"
+    - condition: state
+      entity_id: switch.ev_charger_ev_charger_switch
+      state: "off"
+  action:
+    - service: switch.turn_on
+      target:
+        entity_id: switch.ev_charger_ev_charger_switch
+    - service: logbook.log
+      data:
+        name: EV Charger
+        message: "Turned ON - Price is {{ states('sensor.energy_price_total') }} €/kWh (below {{ states('input_number.low_energy_price_cap') | float(0.10) }} €/kWh)"
+        entity_id: switch.ev_charger_ev_charger_switch
+  mode: single
+
+# Automation to turn OFF EV charger slightly before price rises above low_energy_price_cap
+# This checks upcoming prices and turns off a few minutes before the price change
+- id: ev_charger_turn_off_before_price_rise
+  alias: "EV Charger - Turn OFF before price rises above low_energy_price_cap"
+  description: "Turns off EV charger 2 minutes before price rises above low energy price cap"
+  trigger:
+    - platform: state
+      entity_id: sensor.energy_price_total
+    - platform: state
+      entity_id: input_number.low_energy_price_cap
+    - platform: time_pattern
+      minutes: "/5"
+    - platform: state
+      entity_id: sensor.combined_nordpool_prices_with_transfer
+      attribute: data
+  condition:
+    - condition: state
+      entity_id: switch.ev_charger_ev_charger_switch
+      state: "on"
+    - condition: or
+      conditions:
+        # Condition 1: Price is already at or above low_energy_price_cap
+        - condition: template
+          value_template: "{{ states('sensor.energy_price_total') | float(0) >= (states('input_number.low_energy_price_cap') | float(0.10)) - 0.001 }}"
+        # Condition 2: Price will rise above low_energy_price_cap within 2 minutes (from time_pattern/timeline trigger)
+        - condition: template
+          value_template: >
+            {% set price_cap = states('input_number.low_energy_price_cap') | float(0.10) %}
+            {% set price_data = state_attr('sensor.combined_nordpool_prices_with_transfer', 'data') %}
+            {% if price_data is iterable and price_data is not string %}
+              {% set now_ts = now().timestamp() %}
+              {% set check_time = now_ts + 120 %}
+              {% set current_price = none %}
+              {% set next_price = none %}
+              {% for price_entry in price_data %}
+                {% set start_ts = price_entry.start_time | as_datetime | as_local | as_timestamp %}
+                {% set end_ts = price_entry.end_time | as_datetime | as_local | as_timestamp %}
+                {% if now_ts >= start_ts and now_ts < end_ts %}
+                  {% set current_price = price_entry.price_per_kwh %}
+                {% elif start_ts > now_ts and start_ts <= check_time %}
+                  {% if next_price is none or start_ts < (next_price.start_time | as_datetime | as_local | as_timestamp) %}
+                    {% set next_price = price_entry %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              {% if current_price is not none and current_price < price_cap %}
+                {% if next_price is not none and next_price.price_per_kwh >= price_cap %}
+                  {% set next_start = next_price.start_time | as_datetime | as_local | as_timestamp %}
+                  {% set time_until = next_start - now_ts %}
+                  {{ time_until <= 120 and time_until > 0 }}
+                {% else %}
+                  false
+                {% endif %}
+              {% else %}
+                false
+              {% endif %}
+            {% else %}
+              false
+            {% endif %}
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.ev_charger_ev_charger_switch
+    - service: logbook.log
+      data:
+        name: EV Charger
+        message: >
+          {% set price_cap = states('input_number.low_energy_price_cap') | float(0.10) %}
+          {% set price_data = state_attr('sensor.combined_nordpool_prices_with_transfer', 'data') %}
+          {% set now_ts = now().timestamp() %}
+          {% set current_price = none %}
+          {% if price_data is iterable and price_data is not string %}
+            {% for price_entry in price_data %}
+              {% set start_ts = price_entry.start_time | as_datetime | as_local | as_timestamp %}
+              {% set end_ts = price_entry.end_time | as_datetime | as_local | as_timestamp %}
+              {% if now_ts >= start_ts and now_ts < end_ts %}
+                {% set current_price = price_entry.price_per_kwh %}
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          {% if current_price is not none and current_price >= price_cap %}
+            Turned OFF - Price is {{ current_price | round(3) }} €/kWh (at or above {{ price_cap }} €/kWh)
+          {% else %}
+            Turned OFF - Price will rise above {{ price_cap }} €/kWh within 2 minutes
+          {% endif %}
+        entity_id: switch.ev_charger_ev_charger_switch
+  mode: single
+
