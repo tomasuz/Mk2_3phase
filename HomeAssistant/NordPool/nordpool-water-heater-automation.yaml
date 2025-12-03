@@ -2,7 +2,7 @@
 # This file is suitable for !include_dir_merge_list
 # Uses sensor.energy_price_total which provides current price with transfer
 # Priority 1: Water Heater (2.3 kW)
-# Total current limit: 17000 mA (17 A) - sensor.l3_current provides data in mA
+# Total power limit: 4.0 kW - sensor.p1mini_momentary_active_import_phase_3 provides power in kW
 
 # Automation: Water Heater - Turn ON when price is low and power is available
 - id: water_heater_turn_on_low_price
@@ -14,7 +14,7 @@
     - platform: state
       entity_id: input_number.low_energy_price_cap
     - platform: state
-      entity_id: sensor.l3_current
+      entity_id: sensor.p1mini_momentary_active_import_phase_3
     - platform: homeassistant
       event: start
     - platform: state
@@ -29,11 +29,11 @@
       state: "off"
     - condition: template
       value_template: >
-        {% set total_limit = 17000.0 %}
-        {% set current_consumption = states('sensor.l3_current') | float(0) %}
-        {% set water_heater_current = 10000.0 %}
-        {% set available_current = total_limit - current_consumption %}
-        {{ available_current >= water_heater_current }}
+        {% set power_limit = 4.0 %}
+        {% set current_power = states('sensor.p1mini_momentary_active_import_phase_3') | float(0) %}
+        {% set water_heater_power = 2.3 %}
+        {% set available_power = power_limit - current_power %}
+        {{ available_power >= water_heater_power }}
   action:
     - service: light.turn_on
       target:
@@ -43,7 +43,7 @@
         name: Water Heater
         message: >
           Turned ON - Price: {{ states('sensor.energy_price_total') | round(3) }} €/kWh,
-          Available current: {{ ((17000.0 - states('sensor.l3_current') | float(0)) / 1000) | round(2) }} A
+          Current power: {{ states('sensor.p1mini_momentary_active_import_phase_3') | float(0) | round(2) }} kW
         entity_id: light.sonoff
   mode: single
 
