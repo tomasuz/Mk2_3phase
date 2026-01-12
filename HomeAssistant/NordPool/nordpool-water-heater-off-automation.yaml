@@ -1,31 +1,39 @@
-# Water Heater Automation based on Nord Pool prices
+# Water Heater Automation based on Nord Pool prices and Temperature
 # This file is suitable for !include_dir_merge_list
-# Turning OFF water heater simply when price is high by price cap
+# Turning OFF water heater when price is high OR temperature is high
 
-# Automation: Water Heater - Turn OFF when price >= low_energy_price_cap
-- id: water_heater_turn_off_high_price
-  alias: "Water Heater - Turn OFF when price >= low_energy_price_cap"
-  description: "Turns off water heater when energy price is high"
+# Automation: Water Heater - Turn OFF when price >= cap OR temp >= 65
+- id: water_heater_turn_off_high_price_high_temp
+  alias: "Water Heater - Turn OFF (Price >= Cap OR Temp >= 65)"
+  description: "Turns off water heater when energy price is high or temperature is above 65°C"
   trigger:
     - platform: state
       entity_id: sensor.energy_price_total
     - platform: state
       entity_id: input_number.low_energy_price_cap
+    - platform: numeric_state
+      entity_id: sensor.boileris
+      above: 65.0
     - platform: homeassistant
       event: start
   condition:
-    - condition: template
-      value_template: "{{ states('sensor.energy_price_total') | float(0) >= states('input_number.low_energy_price_cap') | float(0.10) }}"
     - condition: state
-      entity_id: light.sonoff
+      entity_id: switch.sonoff_power
       state: "on"
+    - condition: or
+      conditions:
+        - condition: template
+          value_template: "{{ states('sensor.energy_price_total') | float(0) >= states('input_number.low_energy_price_cap') | float(0.10) - 0.001 }}"
+        - condition: numeric_state
+          entity_id: sensor.boileris
+          above: 65.0
   action:
-    - service: light.turn_off
+    - service: switch.turn_off
       target:
-        entity_id: light.sonoff
+        entity_id: switch.sonoff_power
     - service: logbook.log
       data:
         name: Water Heater
-        message: "Turned OFF - Price: {{ states('sensor.energy_price_total') | round(3) }} €/kWh"
-        entity_id: light.sonoff
+        message: "Turned OFF - Price: {{ states('sensor.energy_price_total') | round(3) }} €/kWh, Temp: {{ states('sensor.boileris') }}°C"
+        entity_id: switch.sonoff_power
   mode: single
