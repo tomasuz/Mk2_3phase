@@ -1,0 +1,7 @@
+50Hz Full period 0.02s, Half of period: 0.01s
+
+Half duty cucle: 0.005s.
+
+0.22uF = 2.2e-7 F
+
+0.005/(1.1*2.2e-7) =  0.005/2,42e-07 = 20661 om = 20k om

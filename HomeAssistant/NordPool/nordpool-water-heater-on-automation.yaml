@@ -1,0 +1,31 @@
+# Water Heater Automation based on Nord Pool prices
+# This file is suitable for !include_dir_merge_list
+# Turning ON water heater simply when price is low by price cap
+
+# Automation: Water Heater - Turn ON when price < low_energy_price_cap
+- id: water_heater_turn_on_low_price
+  alias: "Water Heater - Turn ON when price < low_energy_price_cap"
+  description: "Turns on water heater when energy price is low"
+  trigger:
+    - platform: state
+      entity_id: sensor.energy_price_total
+    - platform: state
+      entity_id: input_number.low_energy_price_cap
+    - platform: homeassistant
+      event: start
+  condition:
+    - condition: template
+      value_template: "{{ states('sensor.energy_price_total') | float(0) < states('input_number.low_energy_price_cap') | float(0.10) }}"
+    - condition: state
+      entity_id: light.sonoff
+      state: "off"
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.sonoff
+    - service: logbook.log
+      data:
+        name: Water Heater
+        message: "Turned ON - Price: {{ states('sensor.energy_price_total') | round(3) }} €/kWh"
+        entity_id: light.sonoff
+  mode: single

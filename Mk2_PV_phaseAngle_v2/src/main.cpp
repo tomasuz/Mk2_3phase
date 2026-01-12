@@ -47,7 +47,8 @@
 #define DATALOG_PERIOD_IN_SECONDS 1
 #define RELAY_CONTROL_DELAY_IN_SECONDS 20
 
-#define DELAYINMAINSCYCLES 10
+#define SUMPSIZE 8
+#define DELAYINMAINSCYCLES 16
 
 // const byte noOfDumploads = 3; 
 const byte noOfDumploads = 0;
@@ -150,7 +151,8 @@ long lastSampleV_minusDC_long[NO_OF_PHASES];
 // float lastSampleVminusDC[NO_OF_PHASES];     // <<--- used with LPF
 // float lastSampleIminusDC[NO_OF_PHASES];     // <<--- used with LPF
 long sumP[NO_OF_PHASES];   //  cumulative sum of power calculations within each mains cycle
-long lastSumP[7][NO_OF_PHASES];   //  cumulative sum of power calculations within each mains cycle
+int indexOfLastSumP[NO_OF_PHASES];
+long lastSumP[SUMPSIZE][NO_OF_PHASES];   //  cumulative sum of power calculations within each mains cycle
 long sumV[NO_OF_PHASES];   //  cumulative sum of voltage calculations within each mains cycle
 long sumVOfLastMainsCycle[NO_OF_PHASES];
 float realV[NO_OF_PHASES];
@@ -233,7 +235,8 @@ boolean phaseAngleTriggerActivated[noOfDumploads];
 
 // Arrays for debugging
 int logindex = 0;
-int samplesV[50];
+int samplesV[20];
+float samplesP[20];
 
 // int logindex[NO_OF_PHASES]
 // int samplesV[NO_OF_PHASES][50];
@@ -308,7 +311,8 @@ void setup() {
   for (byte phase = 0; phase < NO_OF_PHASES; phase++) {
 //  firstLoopOfHalfCycle[phase] = false;
 	  sumP[phase] = 0;
-    for (byte i = 0; i < 7; i++) {
+	  indexOfLastSumP[phase] = 0;
+    for (byte i = 0; i < SUMPSIZE; i++) {
       lastSumP[i][phase] = 0;
     }
 	  sumV[phase] = 0;
@@ -445,10 +449,17 @@ void calculateOfsetsAndEnergy(unsigned char phase) {
   //  previous mains cycle, and determine the gain (or loss) in energy.
   realV[phase] = sumVOfLastMainsCycle[phase] / (float)samplesDuringLastMainsCycle[phase];
 
-  long temp = sumP[phase];
-  for (byte i = 0; i < 7; i++) {
+  indexOfLastSumP[phase]++;
+  if (indexOfLastSumP[phase] >= SUMPSIZE) {
+    indexOfLastSumP[phase] = 0;
+  }
+  lastSumP[indexOfLastSumP[phase]][phase] = sumP[phase];
+
+  long temp = 0;
+  for (byte i = 0; i < SUMPSIZE; i++) {
     temp = temp + lastSumP[i][phase];
   }
+
   realFilteredPower[phase] = powerCal[phase] * (temp >> 3) / (float)samplesDuringLastMainsCycle[phase];
   realLastPower[phase] = realFilteredPower[phase];
   realPower[phase] = powerCal[phase] * sumP[phase] / (float)samplesDuringLastMainsCycle[phase];
@@ -465,7 +476,9 @@ void controllPWMFiringDelay(unsigned char phase) {
       // The idea is to have auto regulation to minimize power output to grid.
       // Power must be only imported or 0
       // Assume realEnergy[phase] is negative if we exporting.
-      if (realFilteredPower[phase] < -500.0) {
+      // float power = realPower[phase];
+      float power = realFilteredPower[phase];
+      if (power < -500.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 235) {
@@ -473,7 +486,7 @@ void controllPWMFiringDelay(unsigned char phase) {
           delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
           analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
-      } else if (realFilteredPower[phase] < -250.0) {
+      } else if (power < -250.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 245) {
@@ -481,7 +494,7 @@ void controllPWMFiringDelay(unsigned char phase) {
           delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
           analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
-      } else if (realFilteredPower[phase] < -125.0) {
+      } else if (power < -125.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 250) {
@@ -489,7 +502,7 @@ void controllPWMFiringDelay(unsigned char phase) {
           delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
           analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
-      } else if (realFilteredPower[phase] < -75.0) {
+      } else if (power < -75.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] <= 252) {
@@ -497,7 +510,7 @@ void controllPWMFiringDelay(unsigned char phase) {
           delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
           analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
-      } else if (realFilteredPower[phase] < 1.0) {
+      } else if (power < 10.0) {
         logicalPWMLoadState[load] = LOAD_ON;
     //    if PWMLoadValue[load] = 255 - PWM is 5V, trac is fully opened.
         if (PWMLoadValue[load] < 255) {
@@ -505,7 +518,7 @@ void controllPWMFiringDelay(unsigned char phase) {
           delayInMainsCycles[phase] = DELAYINMAINSCYCLES;
           analogWrite(outputPinsForPWMcontrol[load], PWMLoadValue[load]);
         }
-      } else if (realFilteredPower[phase] >= 50.0) {
+      } else if (power >= 80.0) {
          // now we importing enegry from grid, so lover diverting increasing delay:
     //     if (realPower[phase] > realLastPower[phase]) {
         if (PWMLoadValue[load] > 0) {
@@ -517,12 +530,20 @@ void controllPWMFiringDelay(unsigned char phase) {
         }
       }
       logindex++;
-      if (logindex >= 50) {
+      if (logindex >= 20) {
         logindex = 0;
       }
       samplesV[logindex] = PWMLoadValue[load];
+      samplesP[logindex] = power;
     } else {
       delayInMainsCycles[phase]--;
+      logindex++;
+      if (logindex >= 20) {
+        logindex = 0;
+      }
+      samplesV[logindex] = PWMLoadValue[load];
+      // samplesP[logindex] = realPower[phase];
+      samplesP[logindex] = realFilteredPower[phase];
     }
   }
 
@@ -607,10 +628,11 @@ void processSamplePair(byte phase) {
     sumVOfLastMainsCycle[phase] = sumV[phase];
     // Count cycles even if they are not detected because of low value.
     // cycleCount[phase]++;
-    for (byte i = 0; i < 6; i++) {
-      lastSumP[i][phase] = lastSumP[i+1][phase];
+    indexOfLastSumP[phase]++;
+    if (indexOfLastSumP[phase] >= SUMPSIZE) {
+      indexOfLastSumP[phase] = 0;
     }
-    lastSumP[6][phase] = sumP[phase];
+    lastSumP[indexOfLastSumP[phase]][phase] = sumP[phase];
     sumP[phase] = 0;
     sumV[phase] = 0;
     samplesDuringLastMainsCycle[phase] = samplesDuringThisMainsCycle[phase];
@@ -699,18 +721,16 @@ void printInfo(unsigned char phase) {
             break;
           case 3:
 //            Serial.println((String) "DCoffset_I_long of phase 0:\t" + DCoffset_I_long[0]);
-            Serial.println((String) "Filtered Real Last Power phase\t"+ phase + " :\t" + realLastPower[phase]);
-            break;
-          case 4:
+//            Serial.println((String) "Filtered Real Last Power phase\t"+ phase + " :\t" + realLastPower[phase]);
             Serial.println((String) "Filtered Real Power phase\t"+ phase + " :\t" + realFilteredPower[phase]);
             break;
-          case 5:
+          case 4:
             Serial.println ((String) "Samples of phase\t"+ phase + " :\t" + samplesDuringLastMainsCycle[phase]);
             break;
-          case 6:
+          case 5:
             Serial.println((String) "realV of phase\t\t"+ phase + " :\t" + ((int)(voltageCal[phase] * sqrt(realV[phase]))));
-    	      break;
-    	    case 7:
+            break;
+          case 6:
             if (phase == 0) {
               Serial.print ("State Of Relays:\t");
               for (unsigned char relay = 0; relay < NO_OF_PHASE_RELAYS; relay++) {
@@ -719,16 +739,28 @@ void printInfo(unsigned char phase) {
               Serial.println("");
             }
             break;
-          case 8:
+          case 7:
             if (phase == 0) {
               Serial.print ("History:\t");
               for (int i = logindex; i >= 0; i--) {
                 Serial.print ((String) samplesV[i] + "\t");
               }
-//              for (unsigned char i = 49; i > logindex; i--) {
-//                Serial.print ((String) samplesV[i] + "\t");
-//              }
-//              Serial.println("");
+              for (unsigned char i = 19; i > logindex; i--) {
+                Serial.print ((String) samplesV[i] + "\t");
+              }
+              Serial.println("");
+            }
+            break;
+          case 8:
+            if (phase == 0) {
+              Serial.print ("History:\t");
+              for (int i = logindex; i >= 0; i--) {
+                Serial.print ((String) samplesP[i] + "\t");
+              }
+              for (unsigned char i = 19; i > logindex; i--) {
+                Serial.print ((String) samplesP[i] + "\t");
+              }
+              Serial.println("");
             }
             break;
           case 9:
@@ -789,18 +821,21 @@ void loop() {
     			//        triggerNeedsToBeArmed = true;   // the trigger is armed every mains cycle
     			// clear the per-cycle accumulators for use in this new mains cycle.
           sumVOfLastMainsCycle[phase] = sumV[phase];
-    	    for (byte i = 0; i < 6; i++) {
-    	      lastSumP[i][phase] = lastSumP[i+1][phase];
-    	    }
-          lastSumP[6][phase] = sumP[phase];
+          indexOfLastSumP[phase]++;
+
+          if (indexOfLastSumP[phase] >= SUMPSIZE) {
+            indexOfLastSumP[phase] = 0;
+          }
+          lastSumP[indexOfLastSumP[phase]][phase] = sumP[phase];
+
           sumP[phase] = 0;
-    			sumV[phase] = 0;
-    			samplesDuringLastMainsCycle[phase] = samplesDuringThisMainsCycle[phase];
-    			samplesDuringThisMainsCycle[phase] = 0;
-    			cumVdeltasThisCycle_long[phase] = 0;
-    			cumIdeltasThisCycle_long[phase] = 0;
-    			// end of processing that is specific to the first +ve Vsample in each new mains cycle
-    		}
+          sumV[phase] = 0;
+          samplesDuringLastMainsCycle[phase] = samplesDuringThisMainsCycle[phase];
+          samplesDuringThisMainsCycle[phase] = 0;
+          cumVdeltasThisCycle_long[phase] = 0;
+          cumIdeltasThisCycle_long[phase] = 0;
+          // end of processing that is specific to the first +ve Vsample in each new mains cycle
+        }
         // still processing POSITIVE Vsamples ...
         if (samplesDuringThisMainsCycle[phase] == 1 && beyondStartUpPhase) {
             // This code is executed once per 20mS, shortly after the start of each new

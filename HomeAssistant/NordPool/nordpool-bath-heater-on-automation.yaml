@@ -1,0 +1,31 @@
+# Bath Heater Automation based on Nord Pool prices
+# This file is suitable for !include_dir_merge_list
+# Turning ON bath heater simply when price is low by price cap
+
+# Automation: Bath Heater - Turn ON when price < low_energy_price_cap
+- id: bath_heater_turn_on_low_price
+  alias: "Bath Heater - Turn ON when price < low_energy_price_cap"
+  description: "Turns on bath heater when energy price is low"
+  trigger:
+    - platform: state
+      entity_id: sensor.energy_price_total
+    - platform: state
+      entity_id: input_number.low_energy_price_cap
+    - platform: homeassistant
+      event: start
+  condition:
+    - condition: template
+      value_template: "{{ states('sensor.energy_price_total') | float(0) < states('input_number.low_energy_price_cap') | float(0.10) }}"
+    - condition: state
+      entity_id: switch.tasmota_2
+      state: "off"
+  action:
+    - service: switch.turn_on
+      target:
+        entity_id: switch.tasmota_2
+    - service: logbook.log
+      data:
+        name: Bath Heater
+        message: "Turned ON - Price: {{ states('sensor.energy_price_total') | round(3) }} €/kWh"
+        entity_id: switch.tasmota_2
+  mode: single
