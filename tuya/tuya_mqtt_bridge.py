@@ -8,7 +8,7 @@
 # Home Assistant MQTT Discovery is enabled and uses the DPS map
 # (units/scale/ranges) from the device JSON you provided.
 
-import os, json, time, threading, queue
+import os, json, time, threading, queue, base64
 from typing import Any, Dict
 import paho.mqtt.client as mqtt
 import tinytuya
@@ -22,7 +22,7 @@ MQTT_BASE   = os.getenv("MQTT_BASE", "tuya")
 POLL_SEC    = float(os.getenv("POLL_SEC", "2.5"))
 TIMEOUT     = float(os.getenv("TUYA_TIMEOUT", "5.0"))
 RETRIES     = int(os.getenv("TUYA_RETRIES", "3"))
-DEVICES_JSON= os.getenv("DEVICES_JSON", "/mnt/data/device1.json")  # your uploaded file
+DEVICES_JSON= os.getenv("DEVICES_JSON", "/mnt/data/device.json")  # your uploaded file
 DISC_PREFIX = os.getenv("DISC_PREFIX", "homeassistant")            # HA discovery prefix
 DISCOVERY   = True  # keep True (we tailor discovery to your DPS)
 
@@ -98,6 +98,23 @@ def scale_in(dps_id: str, val: Any, mapping: Dict[str, Any]):
         return str(val)
     return val
 
+def decode_special_dp(dp_id: str, val: Any) -> Dict[str, Any]:
+    """Decode special DP payloads (like DP 6 Base64 Phase A data)"""
+    if dp_id == "6" and isinstance(val, str):
+        try:
+            data = base64.b64decode(val)
+            if len(data) == 8:
+                # Voltage: Bytes 0-1 (scale 10)
+                v = int.from_bytes(data[0:2], 'big') / 10.0
+                # Current: Bytes 2-4 (scale 1000)
+                c = int.from_bytes(data[2:5], 'big') / 1000.0
+                # Power: Bytes 5-7 (scale 1)
+                p = int.from_bytes(data[5:8], 'big')
+                return {"voltage": v, "current": c, "power": p}
+        except Exception as e:
+            print(f"Error decoding DP 6: {e}")
+    return {}
+
 def ha_device_block(dev: Dict[str, Any]):
     name = dev.get("product_name") or dev.get("name") or f"Tuya {dev['id'][:6]}"
     mdl  = dev.get("model") or dev.get("category") or "Tuya Device"
@@ -132,10 +149,10 @@ def publish_discovery(client, dev: Dict[str, Any]):
             "unique_id": uniq,
             "state_topic":  f"{MQTT_BASE}/{dev_id}/dps/18",
             "command_topic":f"{MQTT_BASE}/{dev_id}/dps/18/set",
-            "payload_on": "true",
-            "payload_off":"false",
-            "state_on": "true",
-            "state_off":"false",
+            "payload_on": '"true"',
+            "payload_off":'"false"',
+            "state_on": '"true"',
+            "state_off":'"false"',
             "icon": "mdi:ev-station"
         })
 
@@ -228,16 +245,31 @@ def publish_discovery(client, dev: Dict[str, Any]):
             "icon": "mdi:thermometer"
         })
 
+    # --- Real-time Info (DP 6: Base64) ---
+    # We add these sensors regardless of mapping if we want to support this decoder
+    for sub, nm, unit, cls in [
+        ("voltage", "Voltage", "V", "voltage"),
+        ("current", "Current", "A", "current"),
+        ("power", "Power", "W", "power")
+    ]:
+        uniq = f"{dev_id}_6_{sub}"
+        disc("sensor", uniq, {
+            "name": f"EV Charger - {nm}",
+            "unique_id": uniq,
+            "state_topic": f"{MQTT_BASE}/{dev_id}/dps/6/{sub}",
+            "unit_of_measurement": unit,
+            "device_class": cls,
+            "icon": "mdi:flash" if cls == "power" else "mdi:lightning-bolt"
+        })
+
 def worker(dev_entry: Dict[str, Any], client: mqtt.Client):
     dev_id = dev_entry["id"]
     mapping = dev_entry.get("mapping", {})
     topic_base = f"{MQTT_BASE}/{dev_id}"
+    lock = threading.Lock()
 
     # Device & connection
     d = mk_tuya(dev_entry)
-
-    # LWT online
-    pub(client, f"{topic_base}/availability", "online", retain=True)
 
     # Command handling (per-DP set)
     def on_msg(_c, _u, msg):
@@ -261,9 +293,18 @@ def worker(dev_entry: Dict[str, Any], client: mqtt.Client):
                             val = raw
                 val_scaled = scale_in(dp, val, mapping)
                 try:
-                    d.set_status(val_scaled, dp)
+                    with lock:
+                        res = d.set_status(val_scaled, dp)
+                    if res and isinstance(res, dict) and "Error" in res:
+                        print(f"[{dev_id}] set DPS {dp} failed: {res['Error']}")
+                        with lock:
+                            try: d.close()
+                            except: pass
                 except Exception as e:
-                    print(f"[{dev_id}] set DPS {dp} failed: {e}")
+                    print(f"[{dev_id}] set DPS {dp} exception: {e}")
+                    with lock:
+                        try: d.close()
+                        except: pass
         except Exception as e:
             print(f"[{dev_id}] command parse error: {e}")
 
@@ -271,10 +312,18 @@ def worker(dev_entry: Dict[str, Any], client: mqtt.Client):
     client.subscribe(f"{topic_base}/dps/+/set")
 
     last = {}
+    availability = "unknown"
+
     while True:
         # poll
         try:
-            status = d.status()  # {'dps': {...}}
+            with lock:
+                status = d.status()
+            
+            if not status or (isinstance(status, dict) and "Error" in status):
+                err = status.get("Error") if status else "No response"
+                raise Exception(err)
+
             dps = status.get("dps", {})
             # publish per-DP (with scaling)
             changed = False
@@ -284,20 +333,45 @@ def worker(dev_entry: Dict[str, Any], client: mqtt.Client):
                 if last.get(k) != scaled:
                     if isinstance(scaled, bool):
                         # Publish as plain string "true" or "false" for HA switches
-                        payload = "true" if scaled else "false"
+                        payload = '"true"' if scaled else '"false"'
                     else:
                         # Publish as JSON for numbers/strings/enums
                         payload = json.dumps(scaled)
                     pub(client, f"{topic_base}/dps/{k}", payload, retain=True)
                     last[k] = scaled
                     changed = True
+                
+                # Special DP 6 decoding (Voltage, Current, Power)
+                if k == "6":
+                    decoded = decode_special_dp(k, v)
+                    for sub_k, sub_v in decoded.items():
+                        # Publish decoded sub-values if they changed
+                        if last.get(f"6_{sub_k}") != sub_v:
+                            pub(client, f"{topic_base}/dps/6/{sub_k}", str(sub_v), retain=True)
+                            last[f"6_{sub_k}"] = sub_v
+                            changed = True
+
             if changed:
                 pub(client, f"{topic_base}/state", json.dumps(last), retain=True)
-            pub(client, f"{topic_base}/availability", "online", retain=True)
+            
+            if availability != "online":
+                availability = "online"
+                pub(client, f"{topic_base}/availability", availability, retain=True)
+                print(f"[{dev_id}] Connected to device")
         except Exception as e:
             # offline or timeout
-            pub(client, f"{topic_base}/availability", "offline", retain=True)
-            time.sleep(1.0)
+            if availability != "offline":
+                availability = "offline"
+                pub(client, f"{topic_base}/availability", availability, retain=True)
+                print(f"[{dev_id}] Device disconnected or error: {e}")
+            
+            with lock:
+                try: d.close()
+                except: pass
+            
+            time.sleep(min(POLL_SEC * 2, 10.0))
+            continue
+
         time.sleep(POLL_SEC)
 
 def main():
