@@ -325,10 +325,29 @@ def worker(dev_entry: Dict[str, Any], client: mqtt.Client):
                 raise Exception(err)
 
             dps = status.get("dps", {})
+            if not dps:
+                continue
+
+            # Logic to ensure the switch status reflects actual charging
+            # If the charger is charging (DP 3), we want the switch (DP 18) to show as ON
+            # We use last.get() as a fallback if the DP is missing in the current status update
+            eff_work_state = dps.get("3") or last.get("3")
+            if eff_work_state == "charger_charging":
+                if dps.get("18") == False or ("18" not in dps and last.get("18") != True):
+                    print(f"[{dev_id}] Charging detected (Work State: {eff_work_state}), ensuring switch (DP 18) is ON")
+                    dps["18"] = True
+
             # publish per-DP (with scaling)
             changed = False
             for k, v in dps.items():
                 scaled = scale_out(k, v, mapping)
+                
+                # Log work state changes or DP 18 changes specifically
+                if k == "3" and last.get(k) != scaled:
+                    print(f"[{dev_id}] Work State: {scaled}")
+                if k == "18" and last.get(k) != scaled:
+                    print(f"[{dev_id}] Switch: {scaled}")
+
                 # Publish booleans as strings to match HA discovery expectations
                 if last.get(k) != scaled:
                     if isinstance(scaled, bool):
@@ -352,7 +371,10 @@ def worker(dev_entry: Dict[str, Any], client: mqtt.Client):
                             changed = True
 
             if changed:
+                print(f"[{dev_id}] DPS changed: {dps}")
+                print(f"[{dev_id}] Scaled state: {last}")
                 pub(client, f"{topic_base}/state", json.dumps(last), retain=True)
+            
             
             if availability != "online":
                 availability = "online"
